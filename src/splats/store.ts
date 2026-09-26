@@ -45,6 +45,47 @@ export class SplatStore {
 
 export const store = new SplatStore();
 
+/** How a capture was trained to be filtered (Kerbl et al. 2024 update / Mip-Splatting). */
+export type AntiAliasing = 'none' | 'aa' | 'mip';
+
+/**
+ * Per-asset rendering data that only loaded captures use; the generated arena leaves it at
+ * its defaults.
+ */
+export interface AssetInfo {
+  /** Degree of the view-dependent colour (spherical harmonics): 0 = base colour only, up to 3. */
+  shDegree: number;
+  /** Half-float coefficients beyond the base colour, RGB interleaved per coefficient, `shTexels` × 8 per splat. */
+  sh: Uint16Array | null;
+  shTexels: number;
+  /** Rotation (column-major 3×3) taking world directions into the capture's own axes. */
+  shRot: Float32Array;
+  aa: AntiAliasing;
+  /** Colours are linear (glTF lin_rec709_display) rather than display sRGB. */
+  linear: boolean;
+}
+
+export const asset: AssetInfo = { shDegree: 0, sh: null, shTexels: 0, shRot: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]), aa: 'none', linear: false };
+
+export function resetAsset(): void {
+  asset.shDegree = 0;
+  asset.sh = null;
+  asset.shTexels = 0;
+  asset.shRot = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+  asset.aa = 'none';
+  asset.linear = false;
+}
+
+/** Coefficients per colour channel beyond the base colour, for degrees 0–3. */
+export const SH_COEFFS = [0, 3, 8, 15] as const;
+
+/** Allocates SH storage for `count` splats at `degree`: 512 splats per texture row. */
+export function allocateSh(count: number, degree: number): void {
+  asset.shDegree = degree;
+  asset.shTexels = degree ? Math.ceil((SH_COEFFS[degree as 0 | 1 | 2 | 3] * 3) / 8) : 0;
+  asset.sh = degree ? new Uint16Array(Math.max(1, Math.ceil(count / 512)) * 512 * asset.shTexels * 8) : null;
+}
+
 // Emission state, applied to every splat written until changed.
 let gainBits = HALF_ONE;
 let normalBits = 0;

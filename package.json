@@ -9,11 +9,14 @@
     "dev": "node tools/build.mjs --watch",
     "serve": "node tools/serve.mjs dist 8080",
     "typecheck": "tsc --noEmit",
-    "test": "node tools/sort-check.mjs"
+    "test": "node tools/run-tests.mjs"
   },
   "devDependencies": {
     "assemblyscript": "^0.28.20",
     "esbuild": "^0.28.2",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "fzstd": "^0.1.1"
   }
 }

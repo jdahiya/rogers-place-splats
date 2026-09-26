@@ -1,6 +1,6 @@
 import { reseed } from '../util/random';
 import { buildReflections, resetReflections } from '../splats/primitives';
-import { store } from '../splats/store';
+import { resetAsset, store } from '../splats/store';
 import { buildExterior, type Box } from './exterior';
 import { buildInterior } from './interior';
 
@@ -17,6 +17,7 @@ export interface SceneInfo {
  */
 export function buildScene(density: number): SceneInfo {
   store.count = 0;
+  resetAsset();
   reseed(7);
   resetReflections();
   const k = 1 / Math.sqrt(density);

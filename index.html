@@ -33,7 +33,12 @@
     <button id="q-ultra" data-q="3.4" aria-pressed="false">Ultra</button>
   </div>
   <div class="tools">
-    <label class="filebtn">Open .ply / .splat<input id="file" type="file" accept=".ply,.splat"></label>
+    <label class="filebtn">Open capture<input id="file" type="file" accept=".ply,.splat,.spz,.glb,.gltf"></label>
+    <select id="aa-mode" hidden aria-label="How the capture was trained">
+      <option value="none">Standard 3DGS</option>
+      <option value="aa">Anti-aliased (3DGS)</option>
+      <option value="mip">Mip-Splatting</option>
+    </select>
     <button id="flip" hidden>Flip</button>
     <button id="back" hidden>Back to arena</button>
     <button id="perf-toggle" aria-expanded="false" aria-controls="perf">Performance</button>
@@ -68,6 +73,11 @@
         <option value="display">Match the display, never under 60 fps</option>
         <option value="floor">Best quality at 60 fps or more</option>
         <option value="saver">Battery saver: cap at 60 fps</option>
+      </select>
+      <label for="pf-sort">Sort order</label>
+      <select id="pf-sort">
+        <option value="distance">Camera distance (glTF default)</option>
+        <option value="depth">View depth (original 3DGS)</option>
       </select>
       <label class="check"><input type="checkbox" id="pf-adaptive"> Adaptive quality</label>
       <label class="check"><input type="checkbox" id="pf-rt"> Ray-traced lighting</label>
@@ -105,7 +115,7 @@
 <div class="hint">Drag to orbit · right-drag to pan<br>Scroll to fly in · WASD + Q/E to move<br>Modelled from the arena's layout, not photographed</div>
 
 <div id="loading"><div><strong id="loading-title">Placing splats</strong><span id="loading-msg">Building the arena…</span></div></div>
-<div id="drop" hidden>Drop a .ply or .splat file</div>
+<div id="drop" hidden>Drop a .ply, .splat, .spz or .glb capture</div>
 <div id="toast" role="status" hidden></div>
 </body>
 </html>

@@ -8,6 +8,7 @@ interface SortModule {
   memory: WebAssembly.Memory;
   heapBase(): number;
   sort(n: number, pos: number, keys: number, counts: number, out: number, a: number, b: number, c: number, d: number): void;
+  sortDistance(n: number, pos: number, keys: number, counts: number, out: number, cx: number, cy: number, cz: number): void;
 }
 
 interface WorkerScope {
@@ -51,23 +52,23 @@ function load(count: number, positions: Float32Array): void {
   new Float32Array(wasm.memory.buffer, posPtr, n * 3).set(positions.subarray(0, n * 3));
 }
 
-function sortJs(row: readonly number[]): Uint32Array {
+/** JavaScript fallback: same keys and counting sort as the WebAssembly module. */
+function sortJs(keyOf: (x: number, y: number, z: number) => number): Uint32Array {
   const p = jsPositions!;
-  const [a, b, c, d] = row as [number, number, number, number];
-  const depth = new Float32Array(n);
+  const key = new Float32Array(n);
   let lo = Infinity, hi = -Infinity;
   for (let i = 0; i < n; i++) {
-    const z = a * p[i * 3]! + b * p[i * 3 + 1]! + c * p[i * 3 + 2]! + d;
-    depth[i] = z;
-    if (z < lo) lo = z;
-    if (z > hi) hi = z;
+    const k = keyOf(p[i * 3]!, p[i * 3 + 1]!, p[i * 3 + 2]!);
+    key[i] = k;
+    if (k < lo) lo = k;
+    if (k > hi) hi = k;
   }
   const scale = hi > lo ? (BUCKETS - 1) / (hi - lo) : 0;
-  const counts = new Uint32Array(BUCKETS), keys = new Uint32Array(n);
+  const counts = new Uint32Array(BUCKETS), bucket = new Uint32Array(n);
   for (let i = 0; i < n; i++) {
-    const k = ((depth[i]! - lo) * scale) | 0;
-    keys[i] = k;
-    counts[k]!++;
+    const b = ((key[i]! - lo) * scale) | 0;
+    bucket[i] = b;
+    counts[b]!++;
   }
   let sum = 0;
   for (let i = 0; i < BUCKETS; i++) {
@@ -76,7 +77,7 @@ function sortJs(row: readonly number[]): Uint32Array {
     sum += size;
   }
   const out = new Uint32Array(n);
-  for (let i = 0; i < n; i++) out[counts[keys[i]!]!++] = i;
+  for (let i = 0; i < n; i++) out[counts[bucket[i]!]!++] = i;
   return out;
 }
 
@@ -94,12 +95,16 @@ scope.onmessage = async (event) => {
     return;
   }
   const t0 = performance.now();
+  const [a, b, c, d] = m.row, [cx, cy, cz] = m.eye;
   let order: Uint32Array;
   if (wasm) {
-    wasm.sort(n, posPtr, keysPtr, countsPtr, outPtr, m.row[0], m.row[1], m.row[2], m.row[3]);
+    if (m.mode === 'distance') wasm.sortDistance(n, posPtr, keysPtr, countsPtr, outPtr, cx, cy, cz);
+    else wasm.sort(n, posPtr, keysPtr, countsPtr, outPtr, a, b, c, d);
     order = new Uint32Array(wasm.memory.buffer, outPtr, n).slice();
+  } else if (m.mode === 'distance') {
+    order = sortJs((x, y, z) => -Math.hypot(x - cx, y - cy, z - cz));
   } else {
-    order = sortJs(m.row);
+    order = sortJs((x, y, z) => a * x + b * y + c * z + d);
   }
   scope.postMessage({ type: 'sorted', order, ms: performance.now() - t0, n, gen: m.gen }, [order.buffer]);
 };

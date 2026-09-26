@@ -7,7 +7,7 @@ import skyFrag from './shaders/sky.frag';
 import splatFrag from './shaders/splat.frag';
 import splatVert from './shaders/splat.vert';
 import { compile, createTarget, deleteTarget, must, uniforms, type Target } from './gl';
-import type { SplatStore } from '../splats/store';
+import { asset, type SplatStore } from '../splats/store';
 import { toHalf } from '../util/half';
 import type { RGB, Vec3 } from '../util/math';
 
@@ -18,8 +18,11 @@ export interface FrameParams {
   right: Vec3;
   up: Vec3;
   fwd: Vec3;
+  eye: Vec3;
   tanHalf: number;
   aspect: number;
+  /** false shows the scene neutrally (loaded captures): no bloom, shoulder, vignette or grain. */
+  look: boolean;
   sun: Vec3;
   day: number;
   dusk: number;
@@ -57,6 +60,8 @@ export class Renderer {
   private readonly empty: WebGLVertexArrayObject;
   private readonly order: WebGLBuffer;
   private readonly neutral: WebGLTexture;
+  /** Higher-order spherical harmonics for captures; a 1×1 placeholder otherwise. */
+  private readonly shTex: WebGLTexture;
   private scene: Target | null = null;
   private mips: Target[] = [];
 
@@ -71,18 +76,21 @@ export class Renderer {
     this.down = compile(gl, fullscreenVert, bloomDownFrag);
     this.up = compile(gl, fullscreenVert, bloomUpFrag);
     this.composite = compile(gl, fullscreenVert, compositeFrag);
-    this.us = uniforms(gl, this.splat, ['u_tex', 'u_light', 'u_proj', 'u_view', 'u_focal', 'u_vp', 'u_useLight', 'u_minPx', 'u_fogD', 'u_nightGlow', 'u_fogC'] as const);
+    this.us = uniforms(gl, this.splat, [
+      'u_tex', 'u_sh', 'u_light', 'u_proj', 'u_view', 'u_focal', 'u_vp', 'u_tanFov', 'u_camPos', 'u_shRot', 'u_shDegree',
+      'u_shTexels', 'u_aa', 'u_useLight', 'u_minPx', 'u_fogD', 'u_nightGlow', 'u_fogC',
+    ] as const);
     this.uk = uniforms(gl, this.sky, ['u_r', 'u_u', 'u_f', 'u_sun', 'u_th', 'u_asp', 'u_day', 'u_dusk'] as const);
     this.ud = uniforms(gl, this.down, ['u_src', 'u_tx', 'u_th'] as const);
     this.uu = uniforms(gl, this.up, ['u_src', 'u_tx', 'u_k'] as const);
-    this.uc = uniforms(gl, this.composite, ['u_scene', 'u_bloom', 'u_bloomK', 'u_seed'] as const);
+    this.uc = uniforms(gl, this.composite, ['u_scene', 'u_bloom', 'u_bloomK', 'u_seed', 'u_look', 'u_encode'] as const);
 
     // One quad, instanced once per splat; the instance attribute is the sorted splat index.
     this.vao = must(gl.createVertexArray(), 'a vertex array');
     gl.bindVertexArray(this.vao);
     const quad = must(gl.createBuffer(), 'a buffer');
     gl.bindBuffer(gl.ARRAY_BUFFER, quad);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-2, -2, 2, -2, -2, 2, 2, 2]), gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
     const aPos = gl.getAttribLocation(this.splat, 'a_pos');
     gl.enableVertexAttribArray(aPos);
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
@@ -99,6 +107,23 @@ export class Renderer {
     this.neutral = must(gl.createTexture(), 'a texture');
     gl.bindTexture(gl.TEXTURE_2D, this.neutral);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([128, 128, 128, 255]));
+    this.shTex = must(gl.createTexture(), 'a texture');
+    this.uploadSh();
+  }
+
+  /** Uploads the capture's spherical harmonics (or a placeholder so the integer sampler stays valid). */
+  private uploadSh(): void {
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, this.shTex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    if (asset.shDegree && asset.sh) {
+      const width = 512 * asset.shTexels, rows = asset.sh.length / (width * 8);
+      if (width > gl.getParameter(gl.MAX_TEXTURE_SIZE) || rows > gl.getParameter(gl.MAX_TEXTURE_SIZE)) throw new Error('This capture is too large for this GPU.');
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32UI, width, rows, 0, gl.RGBA_INTEGER, gl.UNSIGNED_INT, new Uint32Array(asset.sh.buffer, asset.sh.byteOffset, asset.sh.length / 2));
+    } else {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32UI, 1, 1, 0, gl.RGBA_INTEGER, gl.UNSIGNED_INT, new Uint32Array(4));
+    }
   }
 
   /** Packs every splat into the RGBA32UI data texture: 2 texels per splat, 1024 splats per row. */
@@ -127,6 +152,7 @@ export class Renderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32UI, 2048, rows, 0, gl.RGBA_INTEGER, gl.UNSIGNED_INT, data);
+    this.uploadSh();
     this.rows = rows;
     this.drawCount = 0;
   }
@@ -168,10 +194,19 @@ export class Renderer {
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, p.lightTex ?? this.neutral);
       gl.uniform1i(this.us.u_light, 1);
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, this.shTex);
+      gl.uniform1i(this.us.u_sh, 2);
       gl.uniformMatrix4fv(this.us.u_proj, false, p.proj);
       gl.uniformMatrix4fv(this.us.u_view, false, p.view);
       gl.uniform2f(this.us.u_focal, p.focal, p.focal);
       gl.uniform2f(this.us.u_vp, sceneW, sceneH);
+      gl.uniform2f(this.us.u_tanFov, p.tanHalf * p.aspect, p.tanHalf);
+      gl.uniform3fv(this.us.u_camPos, p.eye);
+      gl.uniformMatrix3fv(this.us.u_shRot, false, asset.shRot);
+      gl.uniform1i(this.us.u_shDegree, asset.shDegree);
+      gl.uniform1i(this.us.u_shTexels, asset.shTexels);
+      gl.uniform1i(this.us.u_aa, asset.aa === 'mip' ? 2 : asset.aa === 'aa' ? 1 : 0);
       gl.uniform1f(this.us.u_useLight, p.lightTex ? 1 : 0);
       gl.uniform1f(this.us.u_minPx, p.minPx);
       gl.uniform1f(this.us.u_fogD, p.fogDensity);
@@ -182,7 +217,7 @@ export class Renderer {
       gl.disable(gl.BLEND);
     }
 
-    const bloom = p.bloom && this.hdr && this.mips.length === BLOOM_LEVELS;
+    const bloom = p.bloom && p.look && this.hdr && this.mips.length === BLOOM_LEVELS;
     if (bloom) {
       gl.useProgram(this.down);
       gl.activeTexture(gl.TEXTURE0);
@@ -224,6 +259,8 @@ export class Renderer {
     gl.uniform1i(this.uc.u_bloom, 1);
     gl.uniform1f(this.uc.u_bloomK, bloom ? 0.6 : 0);
     gl.uniform1f(this.uc.u_seed, p.seed);
+    gl.uniform1f(this.uc.u_look, p.look ? 1 : 0);
+    gl.uniform1f(this.uc.u_encode, asset.linear ? 1 : 0);
     this.fullscreen();
     gl.activeTexture(gl.TEXTURE0);
   }

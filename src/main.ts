@@ -14,8 +14,8 @@ import { SHELL, roofY, sdRR } from './scene/arena';
 import { buildScene } from './scene/build';
 import { FONT } from './scene/screens';
 import { Sorter } from './sort/sorter';
-import { flipScene, parsePly, parseSplat } from './splats/importers';
-import { store } from './splats/store';
+import { flipScene, parseGltf, parsePly, parseSplat, parseSpz } from './splats/importers';
+import { asset, store, type AntiAliasing } from './splats/store';
 import { byId, nextPaint, toast } from './util/dom';
 import type { RGB, Vec3 } from './util/math';
 import { GoalShow, LightRig } from './world/show';
@@ -108,11 +108,16 @@ const panel = new PerfPanel(
     drawn: renderer.drawCount,
     sceneW,
     sceneH,
-    sort: `${sorter.backend === 'wasm' ? 'WebAssembly' : sorter.backend === 'js' ? 'JavaScript' : 'Starting'} · ${sorter.lastMs.toFixed(1)} ms`,
+    sort: `${sorter.mode === 'distance' ? 'Distance' : 'Depth'} · ${sorter.backend === 'wasm' ? 'WebAssembly' : sorter.backend === 'js' ? 'JavaScript' : 'Starting'} · ${sorter.lastMs.toFixed(1)} ms`,
   }),
   {
     pacing: (p) => {
       governor.pacing = p;
+      wake();
+    },
+    sortMode: (mode) => {
+      sorter.setMode(mode);
+      forceRender = true;
       wake();
     },
     adaptive: (on) => {
@@ -208,7 +213,7 @@ function frame(now: number): void {
   sceneW = Math.max(1, Math.round(canvas.width * k.scale));
   sceneH = Math.max(1, Math.round(canvas.height * k.scale));
   const v = camera.compute(sceneW, sceneH);
-  sorter.request(v.depthRow);
+  sorter.request(v.depthRow, v.eye);
 
   const key = [v.eye[0], v.eye[1], v.eye[2], v.fwd[0], v.fwd[1], v.fwd[2], sceneW, sceneH];
   let moved = false;
@@ -251,7 +256,8 @@ function frame(now: number): void {
   frameSeed = (frameSeed + 1) % 997;
   renderer.render(
     {
-      view: v.view, proj: v.proj, focal: v.focal, right: v.right, up: v.up, fwd: v.fwd, tanHalf: v.tanHalf, aspect: v.aspect,
+      view: v.view, proj: v.proj, focal: v.focal, right: v.right, up: v.up, fwd: v.fwd, eye: v.eye, tanHalf: v.tanHalf, aspect: v.aspect,
+      look: !custom,
       sun: sun.dir, day: sun.day, dusk: sun.dusk, nightGlow: sun.nightGlow,
       fogColor: air.color, fogDensity: air.density,
       lightTex: rtEnabled && lighting.ready ? lighting.tex : null,
@@ -310,20 +316,23 @@ async function buildArena(): Promise<void> {
   toast(`${store.count.toLocaleString('en-CA')} splats in ${((performance.now() - t0) / 1000).toFixed(1)} s. Lighting refines over the next few seconds.`, 4200);
 }
 
+const CAPTURE_TYPES = ['.ply', '.splat', '.spz', '.glb', '.gltf'];
+
 async function loadCapture(file: File): Promise<void> {
   const name = file.name.toLowerCase();
-  if (!name.endsWith('.ply') && !name.endsWith('.splat')) {
-    toast('Open a .ply or .splat file.');
+  const ext = CAPTURE_TYPES.find((e) => name.endsWith(e));
+  if (!ext) {
+    toast('Open a .ply, .splat, .spz, .glb or .gltf capture.');
     return;
   }
   showLoading('Loading capture', `${file.name} · ${(file.size / 1048576).toFixed(1)} MB`);
   await nextPaint();
   try {
     const buf = await file.arrayBuffer();
-    if (name.endsWith('.ply')) {
-      parsePly(buf);
-      flipScene();
-    } else parseSplat(buf);
+    if (ext === '.ply') parsePly(buf);
+    else if (ext === '.splat') parseSplat(buf);
+    else if (ext === '.spz') await parseSpz(buf);
+    else parseGltf(buf);
     if (!store.count) throw new Error('No splats found in that file.');
     custom = true;
     setCustomUi(true);
@@ -332,7 +341,9 @@ async function loadCapture(file: File): Promise<void> {
     sorter.load(store.pos.slice(0, store.count * 3), store.count);
     frameCapture();
     byId('st-n').textContent = store.count.toLocaleString('en-CA');
-    toast(`${store.count.toLocaleString('en-CA')} splats loaded. Use Flip if it looks upside down.`, 5000);
+    byId<HTMLSelectElement>('aa-mode').value = asset.aa;
+    const colour = asset.shDegree ? `, view-dependent colour (degree ${asset.shDegree})` : '';
+    toast(`${store.count.toLocaleString('en-CA')} splats loaded${colour}. Use Flip if it looks upside down.`, 5000);
   } catch (err) {
     toast(err instanceof Error ? err.message : 'That file could not be read.', 5000);
     await buildArena();
@@ -380,9 +391,10 @@ function setTour(on: boolean): void {
 }
 
 function setCustomUi(on: boolean): void {
-  byId('stations').classList.toggle('custom', on);
+  byId('stations').hidden = on;
   byId('flip').hidden = !on;
   byId('back').hidden = !on;
+  byId('aa-mode').hidden = !on;
   byId('subtitle').textContent = on ? 'Your capture' : 'Gaussian splats · outside and in';
 }
 
@@ -451,6 +463,12 @@ byId<HTMLInputElement>('file').addEventListener('change', (e) => {
   input.value = '';
 });
 
+byId<HTMLSelectElement>('aa-mode').addEventListener('change', (e) => {
+  asset.aa = (e.target as HTMLSelectElement).value as AntiAliasing;
+  forceRender = true;
+  wake();
+});
+
 byId('flip').addEventListener('click', () => {
   flipScene();
   renderer.upload(store);
@@ -511,6 +529,19 @@ async function start(): Promise<void> {
     await Promise.race([document.fonts.load(`800 40px ${FONT}`), new Promise((resolve) => setTimeout(resolve, 2500))]);
   } catch {
     // Fall back to the system font for the scoreboard text.
+  }
+  // ?capture=<url> opens a capture straight away (the server must allow cross-origin reads).
+  const link = new URLSearchParams(location.search).get('capture');
+  if (link) {
+    try {
+      const url = new URL(link, location.href);
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      await loadCapture(new File([await res.blob()], url.pathname.split('/').pop() || 'capture'));
+      return;
+    } catch (err) {
+      toast(`Couldn't open that capture link: ${err instanceof Error ? err.message : String(err)}`, 5000);
+    }
   }
   await buildArena();
 }

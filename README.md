@@ -23,6 +23,34 @@ The model is procedural: it's generated at load time from the arena's real layou
 
 WebGL has no access to hardware ray-tracing cores, so the path tracing runs as ordinary GPU shader work: rays marched through the voxel grids. It's spread across frames within the frame budget, and once the result settles the cost drops to zero. It path-traces the lighting through the voxel scene; the splats themselves are still drawn by sorted rasterisation, not traced per pixel.
 
+## Standards
+
+Splat rendering follows the original paper and its reference rasteriser: Kerbl et al., *3D Gaussian Splatting for Real-Time Radiance Field Rendering*, SIGGRAPH 2023, [paper](https://arxiv.org/abs/2308.04079) and [code](https://github.com/graphdeco-inria/diff-gaussian-rasterization).
+
+- **Projection:** the 3D covariance is projected with the Jacobian of the perspective divide. The centre is clamped to 1.3× the field of view first, and 0.3 px² is added to the 2D covariance. Splats closer than 0.2 m are culled.
+- **Opacity:** alpha is min(0.99, opacity · G). Fragments under 1/255 are skipped, and each splat extends to 3σ. Quads also shrink to where alpha can still reach 1/255, which saves fill on faint splats.
+- **Blending:** premultiplied back-to-front "over", which gives the same result as the reference's front-to-back blending with early termination.
+- **Colour:** spherical harmonics up to degree 3, evaluated per splat for the camera direction, using the reference basis constants. Colour is c = max(Σ SH·Y + 0.5, 0).
+- **Anti-aliased captures:** captures trained with anti-aliasing are shown with the matching opacity compensation. That's either the 3DGS `--antialiasing` mode, or [Mip-Splatting](https://github.com/autonomousvision/mip-splatting) with a 0.1 px² dilation. Choose it from the menu next to **Flip**; SPZ files that flag it switch it on automatically.
+- **Sorting:** by camera distance, the [KHR_gaussian_splatting](https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos/KHR_gaussian_splatting) default. Turning the camera never needs a re-sort. View-depth sorting, as in the original rasteriser, is an option in the Performance panel.
+- **Output:** captures are shown neutrally, with no bloom or tone curve, as display-referred colour. glTF captures with `lin_rec709_display` colour are sRGB-encoded after blending.
+
+Supported capture formats:
+- 3DGS `.ply`, including `f_rest` spherical harmonics
+- `.splat`
+- [Niantic SPZ](https://github.com/nianticlabs/spz) versions 1–4: gzip or per-stream zstd, both rotation encodings, and the anti-aliasing flag
+- glTF 2.0 `.glb`, or `.gltf` with embedded buffers, using the ratified `KHR_gaussian_splatting` extension: xyzw rotations, linear scale and opacity, `SH_DEGREE_l_COEF_n`, colour space and node transforms
+
+`npm test` round-trips each format.
+
+Apple's WWDC26 RealityKit `GaussianSplatComponent` uses the same parameterisation: position, scale, rotation, opacity and SH up to degree 3, drawn back to front. This viewer runs the same data on the web.
+
+**Known differences:**
+- The sort is global, not per-pixel, so splats can occasionally pop. [StopThePop](https://arxiv.org/abs/2402.00525)'s per-pixel sort isn't practical in WebGL2.
+- Base colour is stored in 8 bits, so it clips above 1.
+- SPZ degree-4 colour is truncated to degree 3.
+- glTF sparse accessors and external `.bin` files aren't supported.
+
 ## Performance targets
 
 60 fps is the floor, and the display's refresh rate is the ceiling. Every half second the governor checks recent frames and adjusts one setting, in this order: ray budget, render scale, skipping sub-pixel splats, then bloom. Below 60 fps it's allowed to cut deeper than it would just to reach a high refresh rate.
@@ -53,7 +81,10 @@ Browsers don't report power draw, so watts are modelled from GPU and CPU load fo
 
 ## Loading a real capture
 
-Drop a `.ply` (standard 3D Gaussian Splatting output) or `.splat` file on the page, or use **Open .ply / .splat**. Captures from Polycam, Scaniverse, Luma, Postshot or the reference 3DGS trainer all work. Use **Flip** if the capture comes in upside down. Ray-traced lighting is off for captures, because their lighting is already baked into the photos.
+Drop a `.ply`, `.splat`, `.spz`, `.glb` or `.gltf` capture on the page, or use **Open capture**. Captures from Polycam, Scaniverse, Luma, Postshot, Niantic tools or the reference 3DGS trainer all work.
+- **Link straight to a capture:** add `?capture=<url>` to the page address. The file's server has to allow cross-origin reads.
+- **Upside down?** Use **Flip**.
+- **Lighting:** ray-traced lighting is off for captures, because their lighting is already baked into the photos.
 
 ## Development
 

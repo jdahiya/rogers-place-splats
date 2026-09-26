@@ -5,6 +5,7 @@ import type { Governor, Pacing } from './governor';
 import type { PowerModel } from './power';
 import type { PerfStats } from './stats';
 import type { GpuTimer } from './timer';
+import type { SortMode } from '../sort/protocol';
 
 export interface PanelInfo {
   lighting: string;
@@ -17,6 +18,7 @@ export interface PanelInfo {
 
 export interface PanelHandlers {
   pacing(p: Pacing): void;
+  sortMode(mode: SortMode): void;
   adaptive(on: boolean): void;
   lighting(on: boolean): void;
   bloom(on: boolean): void;
@@ -104,6 +106,8 @@ export class PerfPanel {
     const pacing = byId<HTMLSelectElement>('pf-pacing');
     pacing.value = governor.pacing;
     pacing.addEventListener('change', () => handlers.pacing(pacing.value as Pacing));
+    const sort = byId<HTMLSelectElement>('pf-sort');
+    sort.addEventListener('change', () => handlers.sortMode(sort.value as SortMode));
     const bind = (id: string, on: boolean, fn: (v: boolean) => void): void => {
       const box = byId<HTMLInputElement>(id);
       box.checked = on;
