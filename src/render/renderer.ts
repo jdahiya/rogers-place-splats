@@ -1,0 +1,261 @@
+// Draws a frame: sky, sorted splats into an HDR buffer, bloom, then tone-mapped composite.
+import bloomDownFrag from './shaders/bloom-down.frag';
+import bloomUpFrag from './shaders/bloom-up.frag';
+import compositeFrag from './shaders/composite.frag';
+import fullscreenVert from './shaders/fullscreen.vert';
+import skyFrag from './shaders/sky.frag';
+import splatFrag from './shaders/splat.frag';
+import splatVert from './shaders/splat.vert';
+import { compile, createTarget, deleteTarget, must, uniforms, type Target } from './gl';
+import type { SplatStore } from '../splats/store';
+import { toHalf } from '../util/half';
+import type { RGB, Vec3 } from '../util/math';
+
+export interface FrameParams {
+  view: Float32Array;
+  proj: Float32Array;
+  focal: number;
+  right: Vec3;
+  up: Vec3;
+  fwd: Vec3;
+  tanHalf: number;
+  aspect: number;
+  sun: Vec3;
+  day: number;
+  dusk: number;
+  nightGlow: number;
+  fogColor: RGB;
+  fogDensity: number;
+  /** Per-splat lighting from the ray tracer, or null for unlit colours. */
+  lightTex: WebGLTexture | null;
+  minPx: number;
+  bloom: boolean;
+  seed: number;
+}
+
+const BLOOM_LEVELS = 5;
+
+export class Renderer {
+  readonly gl: WebGL2RenderingContext;
+  /** True when half-float render targets work (needed for bloom). */
+  hdr: boolean;
+  readonly dataTex: WebGLTexture;
+  rows = 0;
+  drawCount = 0;
+
+  private readonly splat: WebGLProgram;
+  private readonly sky: WebGLProgram;
+  private readonly down: WebGLProgram;
+  private readonly up: WebGLProgram;
+  private readonly composite: WebGLProgram;
+  private readonly us;
+  private readonly uk;
+  private readonly ud;
+  private readonly uu;
+  private readonly uc;
+  private readonly vao: WebGLVertexArrayObject;
+  private readonly empty: WebGLVertexArrayObject;
+  private readonly order: WebGLBuffer;
+  private readonly neutral: WebGLTexture;
+  private scene: Target | null = null;
+  private mips: Target[] = [];
+
+  constructor(canvas: HTMLCanvasElement) {
+    const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, depth: false, stencil: false, powerPreference: 'high-performance' });
+    if (!gl) throw new Error('This browser has no WebGL2. Try a current Chrome, Edge, Firefox or Safari.');
+    this.gl = gl;
+    this.hdr = !!gl.getExtension('EXT_color_buffer_float');
+
+    this.splat = compile(gl, splatVert, splatFrag);
+    this.sky = compile(gl, fullscreenVert, skyFrag);
+    this.down = compile(gl, fullscreenVert, bloomDownFrag);
+    this.up = compile(gl, fullscreenVert, bloomUpFrag);
+    this.composite = compile(gl, fullscreenVert, compositeFrag);
+    this.us = uniforms(gl, this.splat, ['u_tex', 'u_light', 'u_proj', 'u_view', 'u_focal', 'u_vp', 'u_useLight', 'u_minPx', 'u_fogD', 'u_nightGlow', 'u_fogC'] as const);
+    this.uk = uniforms(gl, this.sky, ['u_r', 'u_u', 'u_f', 'u_sun', 'u_th', 'u_asp', 'u_day', 'u_dusk'] as const);
+    this.ud = uniforms(gl, this.down, ['u_src', 'u_tx', 'u_th'] as const);
+    this.uu = uniforms(gl, this.up, ['u_src', 'u_tx', 'u_k'] as const);
+    this.uc = uniforms(gl, this.composite, ['u_scene', 'u_bloom', 'u_bloomK', 'u_seed'] as const);
+
+    // One quad, instanced once per splat; the instance attribute is the sorted splat index.
+    this.vao = must(gl.createVertexArray(), 'a vertex array');
+    gl.bindVertexArray(this.vao);
+    const quad = must(gl.createBuffer(), 'a buffer');
+    gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-2, -2, 2, -2, -2, 2, 2, 2]), gl.STATIC_DRAW);
+    const aPos = gl.getAttribLocation(this.splat, 'a_pos');
+    gl.enableVertexAttribArray(aPos);
+    gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+    this.order = must(gl.createBuffer(), 'a buffer');
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.order);
+    const aIdx = gl.getAttribLocation(this.splat, 'a_idx');
+    gl.enableVertexAttribArray(aIdx);
+    gl.vertexAttribIPointer(aIdx, 1, gl.UNSIGNED_INT, 0, 0);
+    gl.vertexAttribDivisor(aIdx, 1);
+    gl.bindVertexArray(null);
+    this.empty = must(gl.createVertexArray(), 'a vertex array');
+
+    this.dataTex = must(gl.createTexture(), 'a texture');
+    this.neutral = must(gl.createTexture(), 'a texture');
+    gl.bindTexture(gl.TEXTURE_2D, this.neutral);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([128, 128, 128, 255]));
+  }
+
+  /** Packs every splat into the RGBA32UI data texture: 2 texels per splat, 1024 splats per row. */
+  upload(s: SplatStore): void {
+    const gl = this.gl, n = s.count, rows = Math.max(1, Math.ceil(n / 1024));
+    if (rows > gl.getParameter(gl.MAX_TEXTURE_SIZE)) throw new Error('Too many splats for this GPU. Try a lower density.');
+    const data = new Uint32Array(2048 * rows * 4);
+    const f = new Float32Array(data.buffer), u8 = new Uint8Array(data.buffer);
+    for (let i = 0; i < n; i++) {
+      const b = i * 8, c = i * 6, q = (b + 3) * 4;
+      f[b] = s.pos[i * 3]!;
+      f[b + 1] = s.pos[i * 3 + 1]!;
+      f[b + 2] = s.pos[i * 3 + 2]!;
+      u8[q] = s.col[i * 4]!;
+      u8[q + 1] = s.col[i * 4 + 1]!;
+      u8[q + 2] = s.col[i * 4 + 2]!;
+      u8[q + 3] = s.col[i * 4 + 3]!;
+      data[b + 4] = toHalf(s.cov[c]!) | (toHalf(s.cov[c + 1]!) << 16);
+      data[b + 5] = toHalf(s.cov[c + 2]!) | (toHalf(s.cov[c + 3]!) << 16);
+      data[b + 6] = toHalf(s.cov[c + 4]!) | (toHalf(s.cov[c + 5]!) << 16);
+      data[b + 7] = s.em[i]! | (s.nrm[i]! << 16);
+    }
+    gl.bindTexture(gl.TEXTURE_2D, this.dataTex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32UI, 2048, rows, 0, gl.RGBA_INTEGER, gl.UNSIGNED_INT, data);
+    this.rows = rows;
+    this.drawCount = 0;
+  }
+
+  /** New back-to-front order from the sort worker. */
+  setOrder(order: Uint32Array): void {
+    const gl = this.gl;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.order);
+    gl.bufferData(gl.ARRAY_BUFFER, order, gl.DYNAMIC_DRAW);
+    this.drawCount = order.length;
+  }
+
+  render(p: FrameParams, sceneW: number, sceneH: number, outW: number, outH: number): void {
+    const gl = this.gl;
+    const scene = this.targets(sceneW, sceneH);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, scene.fb);
+    gl.viewport(0, 0, sceneW, sceneH);
+    gl.disable(gl.BLEND);
+    gl.useProgram(this.sky);
+    gl.uniform3fv(this.uk.u_r, p.right);
+    gl.uniform3fv(this.uk.u_u, p.up);
+    gl.uniform3fv(this.uk.u_f, p.fwd);
+    gl.uniform3fv(this.uk.u_sun, p.sun);
+    gl.uniform1f(this.uk.u_th, p.tanHalf);
+    gl.uniform1f(this.uk.u_asp, p.aspect);
+    gl.uniform1f(this.uk.u_day, p.day);
+    gl.uniform1f(this.uk.u_dusk, p.dusk);
+    this.fullscreen();
+
+    if (this.drawCount) {
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      gl.useProgram(this.splat);
+      gl.bindVertexArray(this.vao);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this.dataTex);
+      gl.uniform1i(this.us.u_tex, 0);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, p.lightTex ?? this.neutral);
+      gl.uniform1i(this.us.u_light, 1);
+      gl.uniformMatrix4fv(this.us.u_proj, false, p.proj);
+      gl.uniformMatrix4fv(this.us.u_view, false, p.view);
+      gl.uniform2f(this.us.u_focal, p.focal, p.focal);
+      gl.uniform2f(this.us.u_vp, sceneW, sceneH);
+      gl.uniform1f(this.us.u_useLight, p.lightTex ? 1 : 0);
+      gl.uniform1f(this.us.u_minPx, p.minPx);
+      gl.uniform1f(this.us.u_fogD, p.fogDensity);
+      gl.uniform1f(this.us.u_nightGlow, p.nightGlow);
+      gl.uniform3fv(this.us.u_fogC, p.fogColor);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, this.drawCount);
+      gl.bindVertexArray(null);
+      gl.disable(gl.BLEND);
+    }
+
+    const bloom = p.bloom && this.hdr && this.mips.length === BLOOM_LEVELS;
+    if (bloom) {
+      gl.useProgram(this.down);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.uniform1i(this.ud.u_src, 0);
+      let src: Target = scene;
+      this.mips.forEach((dst, i) => {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, dst.fb);
+        gl.viewport(0, 0, dst.w, dst.h);
+        gl.bindTexture(gl.TEXTURE_2D, src.tex);
+        gl.uniform2f(this.ud.u_tx, 1 / src.w, 1 / src.h);
+        gl.uniform1f(this.ud.u_th, i === 0 ? 1.0 : 0);
+        this.fullscreen();
+        src = dst;
+      });
+      gl.useProgram(this.up);
+      gl.uniform1i(this.uu.u_src, 0);
+      gl.uniform1f(this.uu.u_k, 1);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.ONE, gl.ONE);
+      for (let i = BLOOM_LEVELS - 1; i > 0; i--) {
+        const from = this.mips[i]!, to = this.mips[i - 1]!;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, to.fb);
+        gl.viewport(0, 0, to.w, to.h);
+        gl.bindTexture(gl.TEXTURE_2D, from.tex);
+        gl.uniform2f(this.uu.u_tx, 1 / from.w, 1 / from.h);
+        this.fullscreen();
+      }
+      gl.disable(gl.BLEND);
+    }
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, outW, outH);
+    gl.useProgram(this.composite);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, scene.tex);
+    gl.uniform1i(this.uc.u_scene, 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, bloom ? this.mips[0]!.tex : this.neutral);
+    gl.uniform1i(this.uc.u_bloom, 1);
+    gl.uniform1f(this.uc.u_bloomK, bloom ? 0.6 : 0);
+    gl.uniform1f(this.uc.u_seed, p.seed);
+    this.fullscreen();
+    gl.activeTexture(gl.TEXTURE0);
+  }
+
+  private fullscreen(): void {
+    this.gl.bindVertexArray(this.empty);
+    this.gl.drawArrays(this.gl.TRIANGLES, 0, 3);
+    this.gl.bindVertexArray(null);
+  }
+
+  private targets(w: number, h: number): Target {
+    if (this.scene && this.scene.w === w && this.scene.h === h) return this.scene;
+    const gl = this.gl;
+    deleteTarget(gl, this.scene);
+    for (const m of this.mips) deleteTarget(gl, m);
+    this.mips = [];
+    let scene = createTarget(gl, w, h, this.hdr);
+    if (!scene && this.hdr) {
+      this.hdr = false;
+      scene = createTarget(gl, w, h, false);
+    }
+    this.scene = must(scene, 'a render target');
+    if (this.hdr) {
+      let mw = w, mh = h;
+      for (let i = 0; i < BLOOM_LEVELS; i++) {
+        mw = Math.max(1, mw >> 1);
+        mh = Math.max(1, mh >> 1);
+        const t = createTarget(gl, mw, mh, true);
+        if (!t) break;
+        this.mips.push(t);
+      }
+    }
+    return this.scene;
+  }
+}

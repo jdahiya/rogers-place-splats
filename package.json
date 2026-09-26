@@ -1,0 +1,19 @@
+{
+  "name": "rogers-place-splats",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Gaussian splat viewer of Rogers Place, Edmonton, inside and out. WebGL2 + WebAssembly.",
+  "scripts": {
+    "build": "node tools/build.mjs",
+    "dev": "node tools/build.mjs --watch",
+    "serve": "node tools/serve.mjs dist 8080",
+    "typecheck": "tsc --noEmit",
+    "test": "node tools/sort-check.mjs"
+  },
+  "devDependencies": {
+    "assemblyscript": "^0.28.20",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.3"
+  }
+}

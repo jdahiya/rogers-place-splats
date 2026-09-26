@@ -1,22 +1,43 @@
 # Rogers Place Splats
 
-A 3D Gaussian splat viewer for Rogers Place, home of the Edmonton Oilers. It covers the outside of the building (the metal skin, the Ford Hall atrium, the plaza and the downtown blocks around it) and the inside (the ice, both seating bowls, the suites, the centre-hung scoreboard and the rafter banners).
+A real-time 3D Gaussian splat model of Rogers Place, home of the Edmonton Oilers. It covers the outside of the building and the inside of the bowl, lit by progressive ray tracing. It runs in any browser with WebGL2, from phones to desktops.
 
-It's one HTML file with no build step and no dependencies.
+**Live demo:** https://jdahiya.github.io/rogers-place-splats/
 
-- **Rendering:** WebGL2, with each splat drawn as an anisotropic 2D Gaussian projected from its 3D covariance (EWA splatting).
-- **Sorting:** a hand-assembled WebAssembly module sorts splats back to front with a 16-bit counting sort. It runs in a Web Worker, and a plain-JS fallback takes over if WebAssembly is unavailable.
-- **Scene:** generated procedurally at load time from the arena's real layout: the NHL 200 × 85 ft sheet with its markings, 26 lower-bowl rows, 22 upper-bowl rows, the retired numbers and the Stanley Cup years. It is not a photographic capture.
+- **Outside:** the metal skin and domed roof, the Ford Hall glass atrium and its video wall, the plaza watch party, and the downtown blocks around it, including Stantec Tower. A time-of-day slider moves the sun from morning to night.
+- **Inside:** a regulation NHL sheet with its markings, both seating bowls with about 25,000 fans, the suites, ribbon boards, the centre-hung scoreboard, retired numbers and Stanley Cup banners. **Goal!** runs a light show with moving spotlights.
+- **Game state:** the scene is set during the 19 September 2026 pre-season game against Winnipeg. The **Broadcast** station sits at press level, where the TV wide shot comes from.
 
-## Run it
+The model is procedural: it's generated at load time from the arena's real layout, not photographed. You can open a trained `.ply` or `.splat` capture in the same viewer (see below).
 
-Any static file server works. One is included:
+## How it works
 
-```bash
-node tools/serve.mjs 8080
-```
+| Stage | Where | What it does |
+| --- | --- | --- |
+| Scene generation | `src/scene/` | Builds about 0.5M to 3.5M splats: oriented discs, blobs, and 2D canvases (scoreboards, banners) rasterised into splats. |
+| Depth sort | `assembly/sort.ts`, `src/sort/` | A 20-bit counting sort compiled to WebAssembly (AssemblyScript), running in a Web Worker. It orders splats back to front in a few milliseconds. |
+| Splat rendering | `src/render/renderer.ts`, `shaders/splat.*` | EWA splatting: each 3D Gaussian is projected to a screen-space ellipse and blended in sorted order into a half-float HDR buffer. |
+| Ray-traced lighting | `src/render/lighting.ts`, `voxels.ts`, `shaders/lighting.frag` | Voxel grids are built from the splats: 1 m around the arena, 4 m for the city. A GPU pass marches rays through them for sun shadows, ambient occlusion, shadowed arena lights and glow from screens. It refines progressively, then stops. |
+| Post | `shaders/bloom-*.frag`, `composite.frag` | Bloom from emissive splats, a soft highlight roll-off, vignette and grain. |
+| Performance | `src/perf/` | Adaptive quality, frame pacing, GPU timing, a power and battery estimate, and live charts. |
 
-Then open http://localhost:8080.
+WebGL has no access to hardware ray-tracing cores, so the tracing runs as ordinary GPU shader work (ray marching). It's spread across frames: a band of splats is re-lit each frame within the frame budget, and once the result settles the cost drops to zero.
+
+## Performance targets
+
+60 fps is the floor, and the display's refresh rate is the ceiling. Every half second the governor checks recent frames and adjusts one setting, in this order: ray budget, render scale, skipping sub-pixel splats, then bloom. Below 60 fps it's allowed to cut deeper than it would just to reach a high refresh rate.
+
+Battery use is kept down in three ways:
+- **Rendering stops when nothing on screen changes.** No camera movement, no lighting work and no animation means no frames.
+- **Battery saver mode** caps rendering at 60 fps on 120 Hz and faster screens.
+- **Phones start lighter:** lower density, fewer rays, coarser voxels, and a lower render scale.
+
+The **Performance** panel shows:
+- Frame rate, GPU time (where the browser exposes a GPU timer), and estimated power and battery drain.
+- 12-second charts of frame time and power.
+- Every current setting.
+
+Browsers don't report power draw, so watts are modelled from GPU and CPU load for a typical phone, laptop or desktop. Where the browser reports the battery level, a measured drain appears once the level drops.
 
 ## Controls
 
@@ -30,22 +51,37 @@ Then open http://localhost:8080.
 | Shift | Move faster |
 | Pinch (touch) | Zoom and pan |
 
-The station buttons jump between views, and **Play tour** flies from the street, through Ford Hall, into the bowl and up to the rafters. **Light / Standard / Dense** sets the splat count (about 0.5M, 1M and 2M).
-
 ## Loading a real capture
 
-Drop a `.ply` (standard 3D Gaussian Splatting output) or `.splat` file on the page, or use **Open .ply / .splat**. Captures from Polycam, Scaniverse, Luma, Postshot or the reference 3DGS trainer all work. Use **Flip** if the capture comes in upside down.
+Drop a `.ply` (standard 3D Gaussian Splatting output) or `.splat` file on the page, or use **Open .ply / .splat**. Captures from Polycam, Scaniverse, Luma, Postshot or the reference 3DGS trainer all work. Use **Flip** if the capture comes in upside down. Ray-traced lighting is off for captures, because their lighting is already baked into the photos.
 
-To build a photographic version of the arena, capture your own photos or video and train a splat from them. Don't use photos scraped from the web; they belong to their photographers.
+## Development
 
-## Rebuilding the WebAssembly sort
-
-`tools/build_wasm.mjs` assembles the module byte by byte, checks it against a reference sort and writes `tools/sort.wasm.b64`. Paste that string into `WASM_B64` in `index.html`.
+Requires Node 20 or newer.
 
 ```bash
-node tools/build_wasm.mjs
+npm install
+npm run build      # AssemblyScript -> dist/sort.wasm, TypeScript -> dist/main.js
+npm run serve      # http://localhost:8080
 ```
+
+`npm run dev` rebuilds on change, `npm run typecheck` runs `tsc`, and `npm test` checks the WebAssembly sort against a reference ordering.
+
+```
+assembly/sort.ts        WebAssembly depth sort (AssemblyScript)
+src/main.ts             entry point: frame loop and UI wiring
+src/scene/              arena geometry, interior, exterior, palettes, 2D screen art
+src/splats/             splat storage, shape primitives, .ply/.splat import
+src/render/             WebGL2 renderer, voxel grids, ray-traced lighting, GLSL shaders
+src/sort/               sort worker and its main-thread client
+src/camera/             orbit camera, input, stations and the guided tour
+src/world/              sun position and sky, arena light rig and goal show
+src/perf/               governor, GPU timer, power model, stats, charts, panel
+tools/                  build script, dev server, sort check
+```
+
+Pushing to `main` builds and deploys the site to GitHub Pages (`.github/workflows/pages.yml`).
 
 ## Not affiliated
 
-This is an independent fan project. It is not affiliated with or endorsed by the Edmonton Oilers, Oilers Entertainment Group, ICE District or Rogers. It uses no logos.
+This is an independent fan project. It is not affiliated with or endorsed by the Edmonton Oilers, Oilers Entertainment Group, ICE District, Sportsnet or Rogers. It uses no team logos.
