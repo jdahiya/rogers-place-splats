@@ -30,7 +30,7 @@ const TOUR: Leg[] = [
   { eye: [210, 60, -140], look: [90, 12, 0], seconds: 5 },
   { eye: [150, 6, -30], look: [90, 10, -5], seconds: 4.5 },
   { eye: [104, 6, -30], look: [70, 8, -26], seconds: 4 },
-  { eye: [62, 30, -28], look: [0, 5, 0], seconds: 5 },
+  { eye: [62, 35.5, -28], look: [0, 5, 0], seconds: 5 },
   { eye: [34, 10, -20], look: [0, 1, 0], seconds: 5 },
   { eye: [0.5, 2.5, -15.6], look: [10, 1, -4], seconds: 5 },
   { eye: [-12, 4, 6], look: [-27, 0.8, 0], seconds: 4.5 },

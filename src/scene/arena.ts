@@ -80,20 +80,22 @@ export interface BowlProfile {
   dLowEnd: number;
   yWalk: number;
   dF: number;
+  /** Height of the upper bowl's first row. */
+  yU0: number;
   d0U: number;
   dUEnd: number;
   yTop: number;
   dBack: number;
 }
 
-export const bowl: BowlProfile = { lower: [], upper: [], dLowEnd: 0, yWalk: 0, dF: 0, d0U: 0, dUEnd: 0, yTop: 0, dBack: 0 };
+export const bowl: BowlProfile = { lower: [], upper: [], dLowEnd: 0, yWalk: 0, dF: 0, yU0: 0, d0U: 0, dUEnd: 0, yTop: 0, dBack: 0 };
 
 function structureTop(d: number, ceil: number): number {
   const b = bowl;
   if (!b.lower.length) return -1;
   if (d < b.dLowEnd) return b.lower[Math.min(b.lower.length - 1, Math.floor((d - 1.8) / 0.86))]! - 0.6;
   if (d < b.dF + 0.3) return b.yWalk - 0.6;
-  if (d < b.d0U) return 17.4;
+  if (d < b.d0U) return b.yU0 - 0.6;
   if (d < b.dUEnd) return b.upper[Math.min(b.upper.length - 1, Math.floor((d - b.d0U) / 0.8))]! - 0.6;
   if (d < b.dBack + 0.3) return b.yTop - 0.6;
   return ceil - 0.3;

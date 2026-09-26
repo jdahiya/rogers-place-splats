@@ -6,7 +6,7 @@ import { glow, setJitter } from '../splats/store';
 import { S, SC, blob, canvasPanel, ell, lightBlob, line, panel, rasterize, reflectFrom, type Color } from '../splats/primitives';
 import { RA, RB, RR, SX, SZ, bowl, ceilY, perimeter, sdRR, walk } from './arena';
 import { AWAY, BLUE, FAN_SHIRTS, HAIR, HOME, OFFICIAL, PANTS, RED, SKIN, type Team } from './palette';
-import { drawClock, drawCup, drawEmblem, drawRetired, drawScore, drawStrip } from './screens';
+import { drawCrown, drawCup, drawEmblem, drawRetired, drawScore, drawScoreRing, drawStrip } from './screens';
 
 // ---- Ice --------------------------------------------------------------------
 
@@ -23,7 +23,7 @@ function buildIce(k: number): void {
       S(px, 0, pz, 1, 0, 0, 0, 0, 1, sp * 0.72, sp * 0.72, 0.01, 0.88 * v, 0.93 * v, 0.97 * v, 0.72);
     }
   }
-  canvasPanel([-3.4, 0.006, 3.4], [1, 0, 0], [0, 0, -1], 6.8, 6.8, 0.07, drawEmblem, 1, 0.85);
+  canvasPanel([-4.2, 0.006, 4.2], [1, 0, 0], [0, 0, -1], 8.4, 8.4, 0.07, drawEmblem, 1, 0.85);
   const old = setJitter(0.03);
   stripeX(0, 0.305, RED);
   stripeX(7.77, 0.305, BLUE);
@@ -36,13 +36,38 @@ function buildIce(k: number): void {
     for (const sz of [-1, 1]) {
       ring(sx * 21.03, sz * 6.71, 4.57, 0.06, RED);
       disk(sx * 21.03, sz * 6.71, 0.305, RED);
+      faceoffMarks(sx * 21.03, sz * 6.71);
       disk(sx * 9.14, sz * 6.71, 0.305, RED);
     }
   }
   crease(27.13, 1);
   crease(-27.13, -1);
+  // Goalkeeper's trapezoid behind each net: 22 ft wide at the goal line, 28 ft at the boards.
+  for (const s of [-1, 1]) for (const sz of [-1, 1]) iceLine(s * 27.13, sz * 3.35, s * 30.3, sz * 4.27, 0.05, RED);
   ring(0, RB, 3.05, 0.06, RED, PI, 2 * PI);
   setJitter(old);
+}
+
+/** A short straight painted line on the ice. */
+function iceLine(x0: number, z0: number, x1: number, z1: number, w: number, c: RGB): void {
+  const dx = x1 - x0, dz = z1 - z0, L = Math.hypot(dx, dz), n = Math.max(1, Math.round(L / 0.1));
+  const ux = dx / L, uz = dz / L;
+  for (let i = 0; i < n; i++) {
+    const t = (i + 0.5) / n;
+    S(x0 + dx * t, 0.013, z0 + dz * t, ux, 0, uz, uz, 0, -ux, (L / n) * 0.62, w * 0.5, 0.004, ...c, 0.97);
+  }
+}
+
+/** Hash marks on an end-zone circle and the L-shaped marks around its dot. */
+function faceoffMarks(cx: number, cz: number): void {
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      iceLine(cx + sx * 0.85, cz + sz * 4.57, cx + sx * 0.85, cz + sz * 5.18, 0.05, RED);
+      const x = cx + sx * 0.61, z = cz + sz * 0.46;
+      iceLine(x, z, x + sx * 0.61, z, 0.05, RED);
+      iceLine(x, z, x, z + sz * 0.91, 0.05, RED);
+    }
+  }
 }
 
 /** A painted line across the rink at x0. */
@@ -106,7 +131,7 @@ function buildBoards(k: number): void {
   walk(0.06, st, (x, z, nx, nz, _s, _f, _L, a) => {
     const tx = -nz, tz = nx, pi = Math.floor(a / 5.4), h = hash(pi, 7, 3), lu = a / 5.4 - pi;
     for (let y = st * 0.5; y < 1.07; y += st) {
-      const c: RGB = y < 0.2 ? [0.93, 0.78, 0.15] : boardAd(h, lu, (y - 0.2) / 0.8);
+      const c: RGB = y < 0.2 ? [0.1, 0.22, 0.6] : boardAd(h, lu, (y - 0.2) / 0.8);
       S(x, y, z, tx, 0, tz, 0, 1, 0, st * 0.7, st * 0.7, 0.03, ...c);
     }
     S(x, 1.09, z, tx, 0, tz, nx, 0, nz, st * 0.7, 0.1, 0.03, 0.14, 0.2, 0.36);
@@ -122,6 +147,11 @@ function buildBoards(k: number): void {
     line(x, 1.12, z, x, 1.12 + H, z, 0.02, 0.12, 0.6, 0.7, 0.78, 0.25);
   });
   done();
+  // Safety netting above the glass at both ends and around the corners.
+  walk(0.12, 0.7 * k, (x, z, nx, nz, s) => {
+    if (s === 2 || s === 6) return;
+    for (let y = 4.4; y < 9.5; y += 0.7 * k) S(x, y, z, -nz, 0, nx, 0, 1, 0, 0.5 * k, 0.5 * k, 0.01, 0.12, 0.12, 0.13, 0.05);
+  });
   // Rubber flooring between the boards and the first row.
   for (const d of [0.45, 1.0, 1.5]) walk(d, 0.35, (x, z, nx, nz) => S(x, 0.02, z, -nz, 0, nx, nx, 0, nz, 0.25, 0.3, 0.02, 0.06, 0.06, 0.07));
 }
@@ -284,28 +314,52 @@ interface TierSpec {
   secN: readonly number[];
   aisle: number;
   skip?: (row: number, x: number, z: number, seg: number) => boolean;
+  /** Leave no floor at all here (the end tunnel). */
+  hole?: (row: number, x: number, z: number, seg: number) => boolean;
   portal?: (row: number, seg: number, section: number, w: number, secL: number) => boolean;
 }
+
+const STEEL: RGB = [0.72, 0.74, 0.77];
 
 /** A tier of rows. Returns the tread height of each row. */
 function tier(o: TierSpec): number[] {
   const heights: number[] = [];
+  // Last handrail point in each aisle, so the rail can run from row to row.
+  const rails = new Map<number, Vec3>();
   let y = o.y0;
   for (let r = 0; r < o.rows; r++) {
     const rise = o.rise(r);
     if (r > 0) y += rise;
     heights.push(y);
     const d = o.d0 + r * o.depth, dim = o.dim * (1 - (o.fall * r) / o.rows);
-    walk(d, o.stepT, (x, z, nx, nz) => S(x, y - rise * 0.5, z, -nz, 0, nx, 0, 1, 0, o.stepT * 0.7, rise * 0.55, 0.03, 0.15 * dim, 0.15 * dim, 0.17 * dim));
+    const railed = new Set<number>();
+    // Dark risers under light concrete treads: the black-and-grey banding of an empty bowl.
+    walk(d, o.stepT, (x, z, nx, nz, s) => {
+      if (!o.hole?.(r, x, z, s)) S(x, y - rise * 0.5, z, -nz, 0, nx, 0, 1, 0, o.stepT * 0.7, rise * 0.55, 0.03, 0.1 * dim, 0.1 * dim, 0.11 * dim);
+    });
     for (const fd of [0.22, 0.64]) {
-      walk(d + o.depth * fd, o.stepT, (x, z, nx, nz) => S(x, y, z, -nz, 0, nx, nx, 0, nz, o.stepT * 0.7, o.depth * 0.28, 0.03, 0.2 * dim, 0.2 * dim, 0.22 * dim));
+      walk(d + o.depth * fd, o.stepT, (x, z, nx, nz, s) => {
+        if (!o.hole?.(r, x, z, s)) S(x, y, z, -nz, 0, nx, nx, 0, nz, o.stepT * 0.7, o.depth * 0.28, 0.03, 0.34 * dim, 0.34 * dim, 0.35 * dim);
+      });
     }
     walk(d + o.depth * 0.45, 0.52, (x, z, nx, nz, s, f, L) => {
+      if (o.hole?.(r, x, z, s)) return;
       const sn = o.secN[s]!, ff = f * sn, section = Math.floor(ff), secL = L / sn, w = (ff - section) * secL;
       const tx = -nz, tz = nx;
       if (w < o.aisle) {
-        S(x, y + 0.01, z, tx, 0, tz, nx, 0, nz, 0.3, o.depth * 0.45, 0.02, 0.36 * dim, 0.36 * dim, 0.38 * dim);
-        S(x - nx * o.depth * 0.42, y + 0.02, z - nz * o.depth * 0.42, tx, 0, tz, nx, 0, nz, 0.3, 0.03, 0.01, 0.75, 0.64, 0.22);
+        S(x, y + 0.01, z, tx, 0, tz, nx, 0, nz, 0.3, o.depth * 0.45, 0.02, 0.5 * dim, 0.5 * dim, 0.51 * dim);
+        S(x - nx * o.depth * 0.42, y + 0.02, z - nz * o.depth * 0.42, tx, 0, tz, nx, 0, nz, 0.3, 0.03, 0.01, 0.82, 0.82, 0.8);
+        // Steel handrail down the middle of the aisle, with a post every other row.
+        const key = s * 100 + section;
+        if (r > 0 && !railed.has(key)) {
+          railed.add(key);
+          const shift = o.aisle / 2 - w, cx = x + tx * shift, cz = z + tz * shift;
+          const top: Vec3 = [cx, y + 0.95, cz];
+          const prev = rails.get(key);
+          if (prev) line(...prev, ...top, 0.022, 0.25, ...STEEL);
+          if (r % 2 === 0) line(cx, y, cz, cx, y + 0.95, cz, 0.02, 0.2, ...STEEL);
+          rails.set(key, top);
+        }
         return;
       }
       if (o.skip?.(r, x, z, s)) return;
@@ -320,7 +374,38 @@ function tier(o: TierSpec): number[] {
   return heights;
 }
 
-/** Both seating bowls, the suite level and the ribbon boards. Returns the offset of the back wall. */
+/** An LED ribbon board running all the way round the bowl at offset d. */
+function ribbonBoard(d: number, y0: number, h: number, k: number): void {
+  const done = reflectFrom();
+  const L = perimeter(d), step = 0.14 * Math.sqrt(k), rows = Math.max(6, Math.round(h / 0.1));
+  const W = Math.round(L / step);
+  const px = rasterize(W, rows, drawStrip);
+  const old = setJitter(0.02);
+  glow(1.45);
+  walk(d, step, (x, z, nx, nz, _s, _f, _L, a) => {
+    const col = Math.min(W - 1, Math.floor((a / L) * W)), tx = -nz, tz = nx;
+    for (let j = 0; j < rows; j++) {
+      const q = (j * W + col) * 4, y = y0 + (1 - (j + 0.5) / rows) * h;
+      S(x, y, z, tx, 0, tz, 0, 1, 0, step * 0.64, (h / rows) * 0.64, 0.02, px[q]! / 255, px[q + 1]! / 255, px[q + 2]! / 255);
+    }
+  });
+  glow(1);
+  setJitter(old);
+  done();
+}
+
+/** The tunnel behind the west net, cut through the first eight rows. */
+function buildTunnel(heights: number[]): void {
+  const xEnd = -(SX + RR), dEnd = 1.8 + 8 * 0.86, top = heights[8]! - 0.3;
+  const rowTop = (x: number): number => heights[Math.min(7, Math.max(0, Math.floor((-x + xEnd - 1.8) / 0.86)))]!;
+  panel(xEnd - dEnd, 0.02, -2.3, 1, 0, 0, 0, 0, 1, dEnd - 1.8, 4.6, 0.35, () => [0.12, 0.12, 0.13]);
+  for (const sz of [-1, 1]) {
+    panel(xEnd - dEnd, 0, sz * 2.3, 1, 0, 0, 0, 1, 0, dEnd - 1.8, top, 0.35, (_fu, _fv, x, y) => (y < rowTop(x) + 0.1 ? [0.3, 0.3, 0.31] : null));
+  }
+  panel(xEnd - dEnd, 0, -2.3, 0, 0, 1, 0, 1, 0, 4.6, top, 0.3, () => [0.02, 0.02, 0.025]);
+}
+
+/** Both seating bowls, the club and suite levels and the two ribbon rings. Returns the offset of the back wall. */
 function buildBowl(k: number): number {
   const stepT = 0.36 * k;
   const lower = tier({
@@ -328,52 +413,40 @@ function buildBowl(k: number): number {
     secN: [1, 3, 5, 3, 1, 3, 5, 3], aisle: 1.1,
     // Team benches and the penalty boxes cut into the first rows.
     skip: (r, x, _z, s) => r < 3 && ((s === 6 && Math.abs(x) < 14.5) || (s === 2 && Math.abs(x) < 6)),
+    hole: (r, _x, z, s) => s === 4 && Math.abs(z) < 2.3 && r < 8,
     portal: (r, s, section, w, secL) =>
       r >= 12 && r <= 17 && Math.abs(w - secL * 0.55) < 1.5 && (s === 2 || s === 6 ? section % 2 === 1 : s & 1 ? section === 1 : false),
   });
+  buildTunnel(lower);
   const dLowEnd = 1.8 + 26 * 0.86, yWalk = lower[lower.length - 1]! + 0.55;
   walk(dLowEnd, stepT, (x, z, nx, nz) => S(x, yWalk - 0.28, z, -nz, 0, nx, 0, 1, 0, stepT * 0.7, 0.3, 0.03, 0.14, 0.14, 0.16));
   for (const dd of [0.4, 1.1, 1.8]) {
-    walk(dLowEnd + dd, stepT, (x, z, nx, nz) => S(x, yWalk, z, -nz, 0, nx, nx, 0, nz, stepT * 0.7, 0.4, 0.03, 0.23, 0.23, 0.25));
+    walk(dLowEnd + dd, stepT, (x, z, nx, nz) => S(x, yWalk, z, -nz, 0, nx, nx, 0, nz, stepT * 0.7, 0.4, 0.03, 0.34, 0.34, 0.35));
   }
 
-  // Suite level: glass-fronted boxes with warm interiors.
-  const dF = dLowEnd + 2.2, yU0 = 18.0, sp = 0.3 * k;
+  // Above the walkway: a white parapet with the lit club concourse behind it, the lower ribbon
+  // ring, then glass-fronted suites up to the upper ribbon ring on the upper-bowl fascia.
+  const dF = dLowEnd + 2.2, yU0 = 20.5, sp = 0.3 * k;
+  const clubTop = yWalk + 2.5, lowRibbon = yWalk + 3.4, suiteTop = yU0 - 1.7;
   walk(dF, sp, (x, z, nx, nz, _s, _f, _L, a) => {
     const tx = -nz, tz = nx, si = Math.floor(a / 4.2), lu = a / 4.2 - si;
-    for (let y = yWalk + sp / 2; y < 16.3; y += sp) {
+    const standing = hash(Math.floor(a / 0.6), 11, 3) < 0.3;
+    for (let y = yWalk + sp / 2; y < suiteTop; y += sp) {
+      if (y >= clubTop && y < lowRibbon) continue;
       let c: Color;
-      if (y < yWalk + 1.0) c = [0.5, 0.6, 0.7, 0.25];
-      else if (y < 14.9 && lu > 0.06 && lu < 0.94) {
-        const t = (y - yWalk - 1.0) / (14.9 - yWalk - 1.0), shade = hash(si, Math.floor(lu * 6), 9);
+      if (y < yWalk + 1.1) c = [0.84, 0.85, 0.87];
+      else if (y < clubTop) c = standing && y < yWalk + 1.9 ? [0.16, 0.13, 0.12] : [0.62, 0.5, 0.38, 1, 1.15];
+      else if (lu > 0.06 && lu < 0.94) {
+        const t = (y - lowRibbon) / (suiteTop - lowRibbon), shade = hash(si, Math.floor(lu * 6), 9);
         c = t > 0.85 ? [0.95, 0.8, 0.55, 1, 1.4] : shade < 0.25 ? [0.18, 0.12, 0.1] : [0.5 + t * 0.15, 0.38 + t * 0.1, 0.26];
-      } else if (y > 15.3 && y < 15.5) c = [0.9, 0.9, 1, 1, 1.6];
-      else c = [0.07, 0.07, 0.08];
+      } else c = [0.07, 0.07, 0.08];
       SC(x, y, z, tx, 0, tz, 0, 1, 0, sp * 0.7, sp * 0.7, 0.03, c);
     }
   });
-
-  // LED ribbon board on the upper-bowl fascia.
-  {
-    const done = reflectFrom();
-    const dR = dF - 0.2, Lr = perimeter(dR), stA = 0.14 * Math.sqrt(k), rows = 11, h = 1.1, y0 = 16.3;
-    const W = Math.round(Lr / stA);
-    const px = rasterize(W, rows, drawStrip);
-    const old = setJitter(0.02);
-    glow(1.45);
-    walk(dR, stA, (x, z, nx, nz, _s, _f, _L, a) => {
-      const col = Math.min(W - 1, Math.floor((a / Lr) * W)), tx = -nz, tz = nx;
-      for (let j = 0; j < rows; j++) {
-        const q = (j * W + col) * 4, y = y0 + (1 - (j + 0.5) / rows) * h;
-        S(x, y, z, tx, 0, tz, 0, 1, 0, stA * 0.64, (h / rows) * 0.64, 0.02, px[q]! / 255, px[q + 1]! / 255, px[q + 2]! / 255);
-      }
-    });
-    glow(1);
-    setJitter(old);
-    done();
-  }
+  ribbonBoard(dF - 0.2, clubTop, lowRibbon - clubTop, k);
+  ribbonBoard(dF - 0.2, suiteTop, 1.1, k);
   walk(dF + 0.3, 0.4 * k, (x, z, nx, nz) => {
-    for (let y = 17.5; y < 18.9; y += 0.4) S(x, y, z, -nz, 0, nx, 0, 1, 0, 0.3, 0.3, 0.02, 0.35, 0.45, 0.55, 0.18);
+    for (let y = yU0 - 0.5; y < yU0 + 0.9; y += 0.4) S(x, y, z, -nz, 0, nx, 0, 1, 0, 0.3, 0.3, 0.02, 0.35, 0.45, 0.55, 0.18);
   });
 
   // Upper bowl: 22 steeper rows.
@@ -395,7 +468,7 @@ function buildBowl(k: number): number {
     }
   });
 
-  Object.assign(bowl, { lower, upper, dLowEnd, yWalk, dF, d0U, dUEnd, yTop, dBack });
+  Object.assign(bowl, { lower, upper, dLowEnd, yWalk, dF, yU0, d0U, dUEnd, yTop, dBack });
   return dBack;
 }
 
@@ -432,39 +505,44 @@ function buildRoofInterior(k: number, dBack: number): void {
   done();
 }
 
+/**
+ * Centre-hung video board: nearly square in plan with a screen on every face, an orange LED crown
+ * leaning outward on top, and a white LED ring underneath.
+ */
 function buildScoreboard(k: number): void {
   const done = reflectFrom();
-  const x0 = 6.6, z0 = 3.6, y0 = 19.8, y1 = 27.2, sp = 0.11 * Math.sqrt(k);
+  const hx = 5.4, hz = 4.6, yb = 20.9, yt = 27.3, sp = 0.11 * Math.sqrt(k);
   const black = (): Color => [0.03, 0.03, 0.035];
-  panel(-x0, y0, z0 - 0.08, 1, 0, 0, 0, 1, 0, 2 * x0, y1 - y0, 0.3, black);
-  panel(x0, y0, -z0 + 0.08, -1, 0, 0, 0, 1, 0, 2 * x0, y1 - y0, 0.3, black);
-  panel(x0 - 0.08, y0, z0, 0, 0, -1, 0, 1, 0, 2 * z0, y1 - y0, 0.3, black);
-  panel(-x0 + 0.08, y0, -z0, 0, 0, 1, 0, 1, 0, 2 * z0, y1 - y0, 0.3, black);
-  panel(-x0, y1, -z0, 1, 0, 0, 0, 0, 1, 2 * x0, 2 * z0, 0.4, black);
-  panel(-x0, y0, -z0, 1, 0, 0, 0, 0, 1, 2 * x0, 2 * z0, 0.4, black);
-  const ys = y0 + 0.35, hs = y1 - y0 - 0.7;
-  canvasPanel([-6.3, ys, z0], [1, 0, 0], [0, 1, 0], 12.6, hs, sp, drawScore, 1.5);
-  canvasPanel([6.3, ys, -z0], [-1, 0, 0], [0, 1, 0], 12.6, hs, sp, drawScore, 1.5);
-  canvasPanel([x0, ys, 3.3], [0, 0, -1], [0, 1, 0], 6.6, hs, sp, drawClock, 1.5);
-  canvasPanel([-x0, ys, -3.3], [0, 0, 1], [0, 1, 0], 6.6, hs, sp, drawClock, 1.5);
-  // Ring board under the main box.
-  const rx = 5.2, rz = 2.8, ry = 18.9, rh = 0.8, rs = 0.1;
-  canvasPanel([-rx, ry, rz], [1, 0, 0], [0, 1, 0], 2 * rx, rh, rs, drawStrip, 1.5);
-  canvasPanel([rx, ry, -rz], [-1, 0, 0], [0, 1, 0], 2 * rx, rh, rs, drawStrip, 1.5);
-  canvasPanel([rx, ry, rz], [0, 0, -1], [0, 1, 0], 2 * rz, rh, rs, drawStrip, 1.5);
-  canvasPanel([-rx, ry, -rz], [0, 0, 1], [0, 1, 0], 2 * rz, rh, rs, drawStrip, 1.5);
+  panel(-hx, yb, hz - 0.08, 1, 0, 0, 0, 1, 0, 2 * hx, yt - yb, 0.3, black);
+  panel(hx, yb, -hz + 0.08, -1, 0, 0, 0, 1, 0, 2 * hx, yt - yb, 0.3, black);
+  panel(hx - 0.08, yb, hz, 0, 0, -1, 0, 1, 0, 2 * hz, yt - yb, 0.3, black);
+  panel(-hx + 0.08, yb, -hz, 0, 0, 1, 0, 1, 0, 2 * hz, yt - yb, 0.3, black);
+  panel(-hx, yb, -hz, 1, 0, 0, 0, 0, 1, 2 * hx, 2 * hz, 0.4, black);
+  panel(-hx, yt + 1.8, -hz, 1, 0, 0, 0, 0, 1, 2 * hx, 2 * hz, 0.4, black);
+
+  const ys = yb + 0.25, hs = yt - yb - 0.5;
+  canvasPanel([-hx + 0.25, ys, hz], [1, 0, 0], [0, 1, 0], 2 * hx - 0.5, hs, sp, drawScore, 1.5);
+  canvasPanel([hx - 0.25, ys, -hz], [-1, 0, 0], [0, 1, 0], 2 * hx - 0.5, hs, sp, drawScore, 1.5);
+  canvasPanel([hx, ys, hz - 0.25], [0, 0, -1], [0, 1, 0], 2 * hz - 0.5, hs, sp, drawScore, 1.5);
+  canvasPanel([-hx, ys, -hz + 0.25], [0, 0, 1], [0, 1, 0], 2 * hz - 0.5, hs, sp, drawScore, 1.5);
+
+  // Crown, leaning outward.
+  const lean = 0.38, cl = Math.hypot(lean, 1), up = 1 / cl, out = lean / cl, ch = 1.9, cs = 0.1;
+  canvasPanel([-hx, yt, hz], [1, 0, 0], [0, up, out], 2 * hx, ch, cs, drawCrown, 1.6);
+  canvasPanel([hx, yt, -hz], [-1, 0, 0], [0, up, -out], 2 * hx, ch, cs, drawCrown, 1.6);
+  canvasPanel([hx, yt, hz], [0, 0, -1], [out, up, 0], 2 * hz, ch, cs, drawCrown, 1.6);
+  canvasPanel([-hx, yt, -hz], [0, 0, 1], [-out, up, 0], 2 * hz, ch, cs, drawCrown, 1.6);
+
+  // White ring underneath.
+  const rx = hx - 0.4, rz = hz - 0.4, ry = yb - 1.2, rh = 1.1, rs = 0.09;
+  canvasPanel([-rx, ry, rz], [1, 0, 0], [0, 1, 0], 2 * rx, rh, rs, drawScoreRing, 1.25);
+  canvasPanel([rx, ry, -rz], [-1, 0, 0], [0, 1, 0], 2 * rx, rh, rs, drawScoreRing, 1.25);
+  canvasPanel([rx, ry, rz], [0, 0, -1], [0, 1, 0], 2 * rz, rh, rs, drawScoreRing, 1.25);
+  canvasPanel([-rx, ry, -rz], [0, 0, 1], [0, 1, 0], 2 * rz, rh, rs, drawScoreRing, 1.25);
   panel(-rx, ry, -rz, 1, 0, 0, 0, 0, 1, 2 * rx, 2 * rz, 0.4, black);
-  line(-rx, ry + rh, 0, -rx, y0, 0, 0.1, 0.2, 0.05, 0.05, 0.06);
-  line(rx, ry + rh, 0, rx, y0, 0, 0.1, 0.2, 0.05, 0.05, 0.06);
-  glow(2.5);
-  for (let x = -x0; x <= x0; x += 0.8) {
-    blob(x, y1 + 0.05, z0, 0.06, 1, 1, 1);
-    blob(x, y1 + 0.05, -z0, 0.06, 1, 1, 1);
-  }
-  glow(1);
   done();
-  for (const [cx, cz] of [[-x0, -z0], [x0, -z0], [-x0, z0], [x0, z0]] as const) {
-    line(cx, y1, cz, cx, ceilY(cx, cz) - 2.6, cz, 0.02, 0.3, 0.2, 0.2, 0.22, 0.6);
+  for (const [cx, cz] of [[-hx, -hz], [hx, -hz], [-hx, hz], [hx, hz]] as const) {
+    line(cx, yt + 1.8, cz, cx, ceilY(cx, cz) - 2.6, cz, 0.02, 0.3, 0.2, 0.2, 0.22, 0.6);
   }
 }
 

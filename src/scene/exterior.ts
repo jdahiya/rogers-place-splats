@@ -5,7 +5,7 @@ import { glow } from '../splats/store';
 import { S, SC, blob, canvasPanel, ell, lightBlob, line, panel, type Color } from '../splats/primitives';
 import { RR, SHELL, SX, roofY, sdRR, segLen, walk } from './arena';
 import { CAR_PAINT, FAN_SHIRTS, HAIR, LEAVES, PANTS, SKIN } from './palette';
-import { drawFord, drawScore } from './screens';
+import { drawFord, drawHallBanner, drawScore } from './screens';
 
 /** Footprint of a solid building, used by the ray tracer. */
 export interface Box {
@@ -134,20 +134,42 @@ function fhGlass(y: number): Color {
   return [0.3 + 0.25 * q, 0.38 + 0.2 * q, 0.48 + 0.2 * q, 0.12];
 }
 
-/** Thin mullion grid on a Ford Hall wall running from (ax, az) to (bx, bz). */
+/** Steel framing on a Ford Hall wall from (ax, az) to (bx, bz): posts, transoms and alternating diagonal braces. */
 function mullions(ax: number, az: number, bx: number, bz: number): void {
-  const L = Math.hypot(bx - ax, bz - az), M: RGB = [0.12, 0.13, 0.15];
-  for (let s = 0; s <= L; s += 3) {
-    const x = ax + ((bx - ax) * s) / L, z = az + ((bz - az) * s) / L;
-    if (outsideShell(x, z)) line(x, 0, z, x, FH.h, z, 0.04, 0.3, ...M, 0.85);
+  const L = Math.hypot(bx - ax, bz - az), M: RGB = [0.14, 0.15, 0.17], bay = 4.5;
+  const at = (s: number): [number, number] => [ax + ((bx - ax) * s) / L, az + ((bz - az) * s) / L];
+  for (let s = 0; s <= L + 0.01; s += bay) {
+    const [x, z] = at(Math.min(s, L));
+    if (outsideShell(x, z)) line(x, 0, z, x, FH.h, z, 0.05, 0.3, ...M, 0.9);
   }
-  for (let y = 3; y < FH.h; y += 3) {
-    for (let s = 0; s < L; s += 3) {
-      const t0 = s / L, t1 = Math.min(s + 3, L) / L;
-      const x0 = ax + (bx - ax) * t0, z0 = az + (bz - az) * t0;
-      if (outsideShell(x0, z0)) line(x0, y, z0, ax + (bx - ax) * t1, y, az + (bz - az) * t1, 0.035, 0.3, ...M, 0.8);
+  for (let y = bay; y < FH.h; y += bay) {
+    for (let s = 0; s < L; s += bay) {
+      const [x0, z0] = at(s), [x1, z1] = at(Math.min(s + bay, L));
+      if (outsideShell(x0, z0)) line(x0, y, z0, x1, y, z1, 0.035, 0.3, ...M, 0.8);
     }
   }
+  for (let s = 0, i = 0; s < L - 0.01; s += bay, i++) {
+    for (let y = 0, j = 0; y < FH.h - 0.01; y += bay * 2, j++) {
+      const [x0, z0] = at(s), [x1, z1] = at(Math.min(s + bay, L));
+      if (!outsideShell(x0, z0) || !outsideShell(x1, z1)) continue;
+      const y1 = Math.min(y + bay * 2, FH.h);
+      if ((i + j) % 2) line(x0, y, z0, x1, y1, z1, 0.035, 0.3, ...M, 0.8);
+      else line(x0, y1, z0, x1, y, z1, 0.035, 0.3, ...M, 0.8);
+    }
+  }
+}
+
+/** The oval ceiling cove over the middle of Ford Hall, filled with downlights. */
+const COVE = { cx: 93, cz: -6, a: 10, b: 20 };
+const HALL_CEILING = 24;
+const coveAt = (x: number, z: number): number => ((x - COVE.cx) / COVE.a) ** 2 + ((z - COVE.cz) / COVE.b) ** 2;
+
+/** Circular floor inlay: a generic pastel terrazzo pattern. */
+function inlay(dx: number, dz: number, r: number): Color {
+  if (r > 7.2) return [0.34, 0.36, 0.4];
+  const band = Math.floor(r / 1.2), wedge = Math.floor(((Math.atan2(dz, dx) + PI) / (2 * PI)) * 12);
+  const tones: Color[] = [[0.62, 0.78, 0.86], [0.93, 0.88, 0.7], [0.72, 0.84, 0.76], [0.9, 0.78, 0.72], [0.8, 0.82, 0.9]];
+  return tones[(band * 3 + wedge) % tones.length]!;
 }
 
 export function person(x: number, z: number, y0 = 0): void {
@@ -165,19 +187,43 @@ function buildFordHall(k: number): void {
   mullions(x1, z0, x1, z1);
   mullions(x0, z0, x1, z0);
   mullions(x0, z1, x1, z1);
-  panel(x0, h, z0, 1, 0, 0, 0, 0, 1, x1 - x0, z1 - z0, 1.0 * k, (_fu, _fv, x, _y, z) =>
-    !outsideShell(x, z) ? null : (x - x0) % 6 < 1.0 ? [0.25, 0.33, 0.45, 0.7] : [0.5, 0.52, 0.56], 0.05);
-  panel(x0, 0.03, z0, 1, 0, 0, 0, 0, 1, x1 - x0, z1 - z0, 0.8 * k, (_fu, _fv, x, _y, z) => {
-    if (!outsideShell(x, z)) return null;
-    const warm = Math.max(0, 1 - Math.hypot((x - 90) / 18, z / 20));
-    return [0.44 + 0.3 * warm, 0.42 + 0.08 * warm, 0.39 + 0.05 * warm];
-  });
-  // The big video wall facing the plaza.
-  panel(85.9, 3.6, 16.4, 0, 0, -1, 0, 1, 0, 32.8, 14.8, 0.4, () => [0.02, 0.02, 0.025]);
-  canvasPanel([86, 4, 16], [0, 0, -1], [0, 1, 0], 32, 14, 0.18 * Math.sqrt(k), drawFord, 1.5);
-  for (let x = 70; x < 107; x += 6) {
-    for (let z = -40; z < 29; z += 6) if (outsideShell(x, z)) lightBlob(x, h - 0.8, z, 0.18, 1, 0.88, 0.65, 3, 6);
+  // Metal roof outside; a white ceiling inside at 24 m, with the oval cove raised 3 m above it.
+  panel(x0, h, z0, 1, 0, 0, 0, 0, 1, x1 - x0, z1 - z0, 1.0 * k, (_fu, _fv, x, _y, z) => (outsideShell(x, z) ? [0.5, 0.52, 0.56] : null), 0.05);
+  panel(x0, HALL_CEILING, z0, 1, 0, 0, 0, 0, 1, x1 - x0, z1 - z0, 0.9 * k, (_fu, _fv, x, _y, z) =>
+    outsideShell(x, z) && coveAt(x, z) >= 1 ? [0.9, 0.9, 0.92] : null, 0.05);
+  const cs = 0.8 * k;
+  for (let x = COVE.cx - COVE.a; x < COVE.cx + COVE.a; x += cs) {
+    for (let z = COVE.cz - COVE.b; z < COVE.cz + COVE.b; z += cs) {
+      const q = coveAt(x, z);
+      if (q >= 1 || !outsideShell(x, z)) continue;
+      const y = HALL_CEILING + 3 * (1 - Math.max(0, (q - 0.82) / 0.18));
+      S(x, y, z, 1, 0, 0, 0, 0, 1, cs * 0.66, cs * 0.66, 0.05, 0.93, 0.93, 0.95);
+    }
   }
+  // LED line tracing the cove's rim, and the grid of round downlights.
+  glow(2.2);
+  for (let t = 0; t < 2 * PI; t += 0.015) {
+    const x = COVE.cx + COVE.a * Math.cos(t), z = COVE.cz + COVE.b * Math.sin(t);
+    if (outsideShell(x, z)) blob(x, HALL_CEILING - 0.05, z, 0.1, 0.95, 0.97, 1);
+  }
+  glow(1);
+  for (let x = x0 + 1; x < x1; x += 2.2) {
+    for (let z = z0 + 1; z < z1; z += 2.2) {
+      const q = coveAt(x, z);
+      if (!outsideShell(x, z) || (q >= 0.8 && (Math.round((x - x0) / 2.2) % 2 || Math.round((z - z0) / 2.2) % 2))) continue;
+      lightBlob(x, (q < 0.8 ? HALL_CEILING + 3 : HALL_CEILING) - 0.08, z, 0.14, 1, 0.98, 0.94, 3, 3);
+    }
+  }
+  // Polished concrete floor with a circular inlay under the cove.
+  panel(x0, 0.03, z0, 1, 0, 0, 0, 0, 1, x1 - x0, z1 - z0, 0.7 * k, (_fu, _fv, x, _y, z) => {
+    if (!outsideShell(x, z)) return null;
+    const dx = x - COVE.cx, dz = z - COVE.cz, r = Math.hypot(dx, dz);
+    return r < 7.5 ? inlay(dx, dz, r) : [0.62, 0.62, 0.6];
+  });
+  // Video wall and the big blue feature wall.
+  panel(85.9, 5.6, 4.3, 0, 0, -1, 0, 1, 0, 20.6, 9.8, 0.4, () => [0.02, 0.02, 0.025]);
+  canvasPanel([86, 6, 4], [0, 0, -1], [0, 1, 0], 20, 9, 0.16 * Math.sqrt(k), drawFord, 1.4);
+  canvasPanel([100, 9, 29.4], [-1, 0, 0], [0, 1, 0], 16, 10, 0.2, drawHallBanner, 1.2);
   let n = 0;
   while (n < 90) {
     const x = rr(88, 106), z = rr(-40, 28);

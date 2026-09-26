@@ -153,6 +153,8 @@ void main() {
     }
   } else {
     light = u_sky * ao;
+    // Ford Hall's white ceiling holds hundreds of downlights; treat them as an even fill.
+    if (p.x > 66.0 && p.x < 108.0 && p.z > -42.0 && p.z < 30.0 && p.y < 27.5) light += vec3(0.58, 0.58, 0.6) * ao;
     if (u_sun.y > -0.05) {
       float facing = hasNormal ? abs(dot(n, u_sun)) : 0.75;
       if (facing > 0.0) light += u_sunCol * facing * trace(p, u_sun, 400.0, rand(seed), none, 0.0);

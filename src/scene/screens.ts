@@ -35,6 +35,51 @@ export function drawScore(ctx: CanvasRenderingContext2D, W: number, H: number): 
   ctx.fillText('SEPT 19 · ROGERS PLACE', W / 2, H * 0.93);
 }
 
+/** The scoreboard's outward-leaning crown: an orange LED band. */
+export function drawCrown(ctx: CanvasRenderingContext2D, W: number, H: number): void {
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#ff5c1c');
+  g.addColorStop(1, '#d63a08');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#fff';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = font(800, H * 0.5);
+  ctx.fillText('OILERS', W * 0.28, H * 0.54);
+  ctx.fillText('EDM 2 · WPG 1', W * 0.72, H * 0.54);
+}
+
+/** The white LED ring under the scoreboard, with the score. */
+export function drawScoreRing(ctx: CanvasRenderingContext2D, W: number, H: number): void {
+  ctx.fillStyle = '#eef2f6';
+  ctx.fillRect(0, 0, W, H);
+  ctx.textBaseline = 'middle';
+  ctx.font = font(800, H * 0.62);
+  const items = ['EDM', '2', 'WPG', '1', 'PRESEASON', '10:29'];
+  let x = H * 0.6, i = 0;
+  while (x < W) {
+    const text = items[i % items.length]!;
+    ctx.fillStyle = i % items.length === 1 ? '#ff4c00' : '#0a1f52';
+    ctx.fillText(text, x, H * 0.55);
+    x += ctx.measureText(text).width + H * (i % 2 ? 1.6 : 0.6);
+    i++;
+  }
+}
+
+/** Big blue feature wall inside Ford Hall. No sponsor marks. */
+export function drawHallBanner(ctx: CanvasRenderingContext2D, W: number, H: number): void {
+  const g = ctx.createLinearGradient(0, 0, W, H);
+  g.addColorStop(0, '#0d2a78');
+  g.addColorStop(1, '#2d5fd0');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.fillRect(0, H * 0.78, W, H * 0.05);
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  ctx.fillRect(0, H * 0.86, W, H * 0.02);
+}
+
 export function drawClock(ctx: CanvasRenderingContext2D, W: number, H: number): void {
   ctx.fillStyle = '#040a18';
   ctx.fillRect(0, 0, W, H);
