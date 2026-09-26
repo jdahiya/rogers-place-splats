@@ -46,7 +46,7 @@ const options = {
   outdir: 'dist',
   minify: !watch,
   sourcemap: true,
-  loader: { '.vert': 'text', '.frag': 'text' },
+  loader: { '.vert': 'text', '.frag': 'text', '.glsl': 'text' },
   logLevel: 'info',
 };
 

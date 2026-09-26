@@ -16,16 +16,19 @@ export interface GridData {
   ny: number;
   nz: number;
   /** nx × ny × nz voxels, x fastest; RGB = emitted light, A = occupancy. */
-  rgba: Uint8Array;
+  geo: Uint8Array;
+  /** RGB = average surface colour of the splats in the voxel, A = their coverage (0 for solid fill). */
+  alb: Uint8Array;
 }
 
 /** The fine grid covers the arena and Ford Hall; the coarse grid covers the city around it. */
 const INSIDE: [number, number, number, number, number, number] = [-86, -1, -70, 110, 50, 70];
-const OUTSIDE: [number, number, number, number, number, number] = [-320, 0, -320, 320, 260, 320];
+const OUTSIDE: [number, number, number, number, number, number] = [-320, -4, -320, 320, 260, 320];
 
 interface Accum {
   x0: number; y0: number; z0: number; v: number; nx: number; ny: number; nz: number;
-  occ: Float32Array; er: Float32Array; eg: Float32Array; eb: Float32Array; solid: Uint8Array;
+  occ: Float32Array; er: Float32Array; eg: Float32Array; eb: Float32Array;
+  ar: Float32Array; ag: Float32Array; ab: Float32Array; solid: Uint8Array;
 }
 
 function makeGrid(bounds: readonly number[], voxel: number, maxDim: number): Accum {
@@ -33,7 +36,8 @@ function makeGrid(bounds: readonly number[], voxel: number, maxDim: number): Acc
   let v = voxel;
   while (Math.max((x1 - x0) / v, (y1 - y0) / v, (z1 - z0) / v) > maxDim) v *= 1.25;
   const nx = Math.ceil((x1 - x0) / v), ny = Math.ceil((y1 - y0) / v), nz = Math.ceil((z1 - z0) / v), n = nx * ny * nz;
-  return { x0, y0, z0, v, nx, ny, nz, occ: new Float32Array(n), er: new Float32Array(n), eg: new Float32Array(n), eb: new Float32Array(n), solid: new Uint8Array(n) };
+  const f = (): Float32Array => new Float32Array(n);
+  return { x0, y0, z0, v, nx, ny, nz, occ: f(), er: f(), eg: f(), eb: f(), ar: f(), ag: f(), ab: f(), solid: new Uint8Array(n) };
 }
 
 const contains = (g: Accum, x: number, y: number, z: number): boolean =>
@@ -47,9 +51,12 @@ function index(g: Accum, x: number, y: number, z: number): number {
 
 function splat(s: SplatStore, fine: Accum, coarse: Accum): void {
   for (let i = 0; i < s.count; i++) {
-    const x = s.pos[i * 3]!, y = s.pos[i * 3 + 1]!, z = s.pos[i * 3 + 2]!;
-    if (y < 0.15) continue; // floors don't cast shadows, and mirrored splats are virtual
-    const g = contains(fine, x, y, z) ? fine : coarse;
+    const x = s.pos[i * 3]!, py = s.pos[i * 3 + 1]!, z = s.pos[i * 3 + 2]!;
+    if (py < -0.02) continue; // mirrored splats under the ice are virtual
+    const g = contains(fine, x, Math.max(py, 0), z) ? fine : coarse;
+    // Floors (ice, pavement) go in the layer just below y = 0, so they reflect light
+    // without shadowing things standing on them.
+    const y = py < 0.15 ? -0.5 * g.v : py;
     if (g === coarse && !contains(coarse, x, y, z)) continue;
     const c = i * 6;
     const xx = s.cov[c]!, xy = s.cov[c + 1]!, xz = s.cov[c + 2]!, yy = s.cov[c + 3]!, yz = s.cov[c + 4]!, zz = s.cov[c + 5]!;
@@ -59,7 +66,10 @@ function splat(s: SplatStore, fine: Accum, coarse: Accum): void {
     if (w <= 0) continue;
     const gain = fromHalf(s.em[i]!);
     const emit = gain > 1.05 ? gain : 0;
-    const er = (emit * s.col[i * 4]!) / 255, eg = (emit * s.col[i * 4 + 1]!) / 255, eb = (emit * s.col[i * 4 + 2]!) / 255;
+    const r = s.col[i * 4]! / 255, gr = s.col[i * 4 + 1]! / 255, b = s.col[i * 4 + 2]! / 255;
+    const er = emit * r, eg = emit * gr, eb = emit * b;
+    // Screens and lamps reflect little; everything else reflects its own colour.
+    const ra = emit ? 0.1 : r, ga = emit ? 0.1 : gr, ba = emit ? 0.1 : b;
     // Large splats spread over the voxels they span.
     const sx = Math.sqrt(xx), sy = Math.sqrt(yy), sz = Math.sqrt(zz);
     const mx = Math.min(3, Math.ceil((2 * sx) / g.v)), my = Math.min(3, Math.ceil((2 * sy) / g.v)), mz = Math.min(3, Math.ceil((2 * sz) / g.v));
@@ -70,6 +80,9 @@ function splat(s: SplatStore, fine: Accum, coarse: Accum): void {
           const k = index(g, x + ((a + 0.5) / mx - 0.5) * 2 * sx, y + ((b + 0.5) / my - 0.5) * 2 * sy, z + ((q + 0.5) / mz - 0.5) * 2 * sz);
           if (k < 0) continue;
           g.occ[k]! += share;
+          g.ar[k]! += ra * share;
+          g.ag[k]! += ga * share;
+          g.ab[k]! += ba * share;
           if (emit) {
             g.er[k]! += er * share;
             g.eg[k]! += eg * share;
@@ -111,15 +124,22 @@ function fillBoxes(g: Accum, boxes: readonly Box[]): void {
 }
 
 function pack(g: Accum): GridData {
-  const n = g.nx * g.ny * g.nz, rgba = new Uint8Array(n * 4);
+  const n = g.nx * g.ny * g.nz, geo = new Uint8Array(n * 4), alb = new Uint8Array(n * 4);
   const byte = (v: number): number => (v <= 0 ? 0 : v >= 1 ? 255 : (v * 255 + 0.5) | 0);
   for (let k = 0; k < n; k++) {
-    rgba[k * 4] = byte(g.er[k]! * 0.4);
-    rgba[k * 4 + 1] = byte(g.eg[k]! * 0.4);
-    rgba[k * 4 + 2] = byte(g.eb[k]! * 0.4);
-    rgba[k * 4 + 3] = g.solid[k] ? 255 : byte(1 - Math.exp(-1.4 * g.occ[k]!));
+    const occ = g.occ[k]!;
+    geo[k * 4] = byte(g.er[k]! * 0.4);
+    geo[k * 4 + 1] = byte(g.eg[k]! * 0.4);
+    geo[k * 4 + 2] = byte(g.eb[k]! * 0.4);
+    geo[k * 4 + 3] = g.solid[k] ? 255 : byte(1 - Math.exp(-1.4 * occ));
+    if (occ > 0) {
+      alb[k * 4] = byte(g.ar[k]! / occ);
+      alb[k * 4 + 1] = byte(g.ag[k]! / occ);
+      alb[k * 4 + 2] = byte(g.ab[k]! / occ);
+      alb[k * 4 + 3] = byte(occ);
+    }
   }
-  return { x0: g.x0, y0: g.y0, z0: g.z0, v: g.v, nx: g.nx, ny: g.ny, nz: g.nz, rgba };
+  return { x0: g.x0, y0: g.y0, z0: g.z0, v: g.v, nx: g.nx, ny: g.ny, nz: g.nz, geo, alb };
 }
 
 export function buildVoxelGrids(s: SplatStore, boxes: readonly Box[], fineVoxel: number, coarseVoxel: number, max3D: number): { fine: GridData; coarse: GridData } {

@@ -49,7 +49,9 @@ export class GoalShow {
     // House lights: ten fixtures spread over the whole sheet, hung just under the catwalks.
     const house = this.active ? 0.012 : 0.095;
     for (const x of [-28, -14, 0, 14, 28]) for (const z of [-10, 10]) out.add([x, 33.5, z], house, [1, 0.97, 0.92]);
-    out.ambient = this.active ? [0.07, 0.07, 0.09] : [0.32, 0.31, 0.33];
+    // Indoor light now comes from bounces off the ice and stands; this is only a faint floor
+    // for rays that reach the dark ceiling.
+    out.ambient = this.active ? [0.02, 0.02, 0.025] : [0.06, 0.06, 0.065];
     if (!this.active) return;
     const t = (now - this.start) / 1000;
     for (let k = 0; k < 6; k++) {

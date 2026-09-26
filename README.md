@@ -17,11 +17,11 @@ The model is procedural: it's generated at load time from the arena's real layou
 | Scene generation | `src/scene/` | Builds about 0.5M to 3.5M splats: oriented discs, blobs, and 2D canvases (scoreboards, banners) rasterised into splats. |
 | Depth sort | `assembly/sort.ts`, `src/sort/` | A 20-bit counting sort compiled to WebAssembly (AssemblyScript), running in a Web Worker. It orders splats back to front in a few milliseconds. |
 | Splat rendering | `src/render/renderer.ts`, `shaders/splat.*` | EWA splatting: each 3D Gaussian is projected to a screen-space ellipse and blended in sorted order into a half-float HDR buffer. |
-| Ray-traced lighting | `src/render/lighting.ts`, `voxels.ts`, `shaders/lighting.frag` | Voxel grids are built from the splats: 1 m around the arena, 4 m for the city. A GPU pass marches rays through them for sun shadows, ambient occlusion, shadowed arena lights and glow from screens. It refines progressively, then stops. |
+| Path-traced lighting | `src/render/lighting.ts`, `voxels.ts`, `shaders/trace.glsl`, `cache.frag`, `lighting.frag` | Voxel grids are built from the splats, storing coverage, surface colour and emission: 1 m around the arena, 4 m for the city. A radiance cache traces direct light and bounce rays for every surface voxel; each full pass adds a bounce. Each splat then gathers from it: shadowed sun and arena lights, sky light, and multi-bounce indirect light, such as ice lighting the lower bowl or screens tinting the crowd. It refines progressively, then stops. |
 | Post | `shaders/bloom-*.frag`, `composite.frag` | Bloom from emissive splats, a soft highlight roll-off, vignette and grain. |
 | Performance | `src/perf/` | Adaptive quality, frame pacing, GPU timing, a power and battery estimate, and live charts. |
 
-WebGL has no access to hardware ray-tracing cores, so the tracing runs as ordinary GPU shader work (ray marching). It's spread across frames: a band of splats is re-lit each frame within the frame budget, and once the result settles the cost drops to zero.
+WebGL has no access to hardware ray-tracing cores, so the path tracing runs as ordinary GPU shader work: rays marched through the voxel grids. It's spread across frames within the frame budget, and once the result settles the cost drops to zero. It path-traces the lighting through the voxel scene; the splats themselves are still drawn by sorted rasterisation, not traced per pixel.
 
 ## Performance targets
 
@@ -66,6 +66,8 @@ npm run serve      # http://localhost:8080
 ```
 
 `npm run dev` rebuilds on change, `npm run typecheck` runs `tsc`, and `npm test` checks the WebAssembly sort against a reference ordering.
+
+`node tools/fetch-reference.mjs` downloads the openly licensed Rogers Place photos on Wikimedia Commons into `reference/`, with a `CREDITS.csv` of authors and licences. They're visual reference for modelling. The folder is git-ignored and isn't part of the site.
 
 ```
 assembly/sort.ts        WebAssembly depth sort (AssemblyScript)

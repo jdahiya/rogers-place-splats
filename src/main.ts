@@ -27,14 +27,14 @@ const IS_PHONE = matchMedia('(pointer: coarse)').matches && Math.min(screen.widt
 const PROFILE = IS_PHONE
   ? {
       knobs: { scale: 0.8, minScale: 0.5, maxScale: 1, dpr: 1.5, rtRows: 16, rtMin: 2, rtMax: 64, minPx: 0, bloom: true },
-      rays: { rays: 2, lightSamples: 1, steps: 28 },
+      rays: { rays: 2, cacheRays: 2, lightSamples: 1, steps: 28 },
       voxel: { fine: 2, coarse: 8 },
       cycles: 8,
       density: 0.5,
     }
   : {
       knobs: { scale: 1, minScale: 0.5, maxScale: 1, dpr: 1.5, rtRows: 96, rtMin: 8, rtMax: 512, minPx: 0, bloom: true },
-      rays: { rays: 3, lightSamples: 2, steps: 56 },
+      rays: { rays: 3, cacheRays: 3, lightSamples: 2, steps: 56 },
       voxel: { fine: 1, coarse: 4 },
       cycles: 12,
       density: 1.1,
@@ -43,7 +43,7 @@ const PROFILE = IS_PHONE
 const canvas = byId<HTMLCanvasElement>('view');
 const renderer = createRenderer();
 const gl = renderer.gl;
-const lighting = new Lighting(gl);
+const lighting = new Lighting(gl, renderer.hdr);
 const camera = new Camera();
 const flight = new Flight();
 const show = new GoalShow();
@@ -103,8 +103,8 @@ const panel = new PerfPanel(
       ? 'Off'
       : !lighting.ready
         ? custom ? 'Off for captures (their lighting is baked in)' : 'Preparing'
-        : lighting.active ? `Refining · ${lighting.pending} passes queued` : 'Converged, idle',
-    rays: `${PROFILE.rays.rays} ambient + ${PROFILE.rays.lightSamples} shadow, up to ${PROFILE.rays.steps} steps`,
+        : lighting.status,
+    rays: `${PROFILE.rays.rays} bounce + ${PROFILE.rays.lightSamples} shadow per splat, ${PROFILE.rays.cacheRays} bounce per voxel`,
     drawn: renderer.drawCount,
     sceneW,
     sceneH,
@@ -233,7 +233,14 @@ function frame(now: number): void {
     show.rig(now, rig);
     relit = lighting.step(
       renderer.dataTex,
-      { rows: k.rtRows, rays: PROFILE.rays.rays, lightSamples: PROFILE.rays.lightSamples + (show.active ? 1 : 0), steps: PROFILE.rays.steps },
+      {
+        rows: k.rtRows,
+        cacheSlices: Math.max(2, Math.round(k.rtRows / 6)),
+        rays: PROFILE.rays.rays,
+        cacheRays: PROFILE.rays.cacheRays,
+        lightSamples: PROFILE.rays.lightSamples + (show.active ? 1 : 0),
+        steps: PROFILE.rays.steps,
+      },
       sun,
       rig,
       show.active ? 0.4 : 0.08,
