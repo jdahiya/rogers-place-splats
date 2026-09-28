@@ -24,6 +24,9 @@ const ZR = [-240, -103, 102, 240];
 const ROAD_HALF = 8;
 const PLAZA = { x0: 108, x1: 145, z0: -90, z1: 90 };
 
+/** Roads closer than this to the arena get their markings as separate, crisp splats. */
+const MARKED = 260;
+
 const inPlaza = (x: number, z: number): boolean => x > PLAZA.x0 && x < PLAZA.x1 && z > PLAZA.z0 && z < PLAZA.z1;
 
 /** The plaza and a 20 m apron round the building get finer paving than the rest of the ground. */
@@ -40,6 +43,8 @@ function groundColor(x: number, z: number): RGB {
     if (d < best) { best = d; alongX = false; centre = r; }
   }
   if (best < ROAD_HALF) {
+    // The roads round the arena block get crisp painted markings of their own (buildMarkings).
+    if (Math.abs(centre) < MARKED) return [0.1, 0.105, 0.115];
     const across = alongX ? x - centre : z - centre, along = alongX ? z : x;
     const crossing = (alongX ? ZR : XR).find((r) => Math.abs(along - r) < ROAD_HALF + 5);
     if (crossing !== undefined && Math.abs(along - crossing) > ROAD_HALF + 1 && ((across % 1.2) + 1.2) % 1.2 < 0.6) return [0.72, 0.72, 0.7];
@@ -269,10 +274,43 @@ function buildStreetLife(k: number): void {
 }
 
 /** Builds everything outside and returns the solid building footprints for the ray tracer. */
+/**
+ * Painted markings on the four roads round the arena block, as thin splats (the ground grid is
+ * far too coarse for 15 cm lines): yellow centre lines, white lane dashes and zebra crossings.
+ */
+function buildMarkings(k: number): void {
+  const step = 0.4 * k, yellow: RGB = [0.75, 0.6, 0.15], white: RGB = [0.72, 0.72, 0.7];
+  for (const [roads, cross, alongX] of [[ZR, XR, true], [XR, ZR, false]] as const) {
+    // A splat at distance a along a road at r, offset sideways by off; long along the road.
+    const paint = (r: number, a: number, off: number, len: number, width: number, c: RGB): void => {
+      const x = alongX ? a : r + off, z = alongX ? r + off : a;
+      if (alongX) S(x, 0.02, z, 1, 0, 0, 0, 0, -1, len, width, 0.01, ...c);
+      else S(x, 0.02, z, 0, 0, 1, 1, 0, 0, len, width, 0.01, ...c);
+    };
+    for (const r of roads) {
+      if (Math.abs(r) >= MARKED) continue;
+      for (let a = -MARKED + step / 2; a < MARKED; a += step) {
+        if (cross.some((o) => Math.abs(a - o) < ROAD_HALF + 4.5)) continue; // not through junctions
+        paint(r, a, 0, step * 0.7, 0.07, yellow);
+        if (((a % 6) + 6) % 6 < 3) for (const off of [-4, 4]) paint(r, a, off, step * 0.7, 0.06, white);
+      }
+      // Zebra crossings just before each junction: 3 m stripes, one every metre across the road.
+      for (const o of cross) {
+        if (Math.abs(o) >= MARKED) continue;
+        for (const side of [-1, 1]) {
+          const a0 = o + side * (ROAD_HALF + 2.5);
+          for (let c = -ROAD_HALF + 0.5; c < ROAD_HALF; c += 1) for (const da of [-1, 0, 1]) paint(r, a0 + da, c, 0.55, 0.2, white);
+        }
+      }
+    }
+  }
+}
+
 export function buildExterior(k: number): Box[] {
   const boxes: Box[] = [];
   buildEnvelope(k);
   buildGround(k);
+  buildMarkings(k);
   buildCity(k, boxes);
   buildStreetLife(k);
   return boxes;

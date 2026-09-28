@@ -1,7 +1,9 @@
 // Adaptive quality. 60 fps is the floor; the display's refresh rate is the ceiling.
-// Every half second it looks at recent frames and moves one knob: ray budget first, then render
-// scale, then skipping sub-pixel splats, then bloom. Below 60 fps it may go further than it will
-// just to reach a high refresh rate.
+// Every half second it looks at recent frames. Above 60 fps it only trades the ray budget, which
+// the eye can't see, to reach a faster display's refresh rate. The render scale, fine splats and
+// bloom only give way when frames stay under 60 fps, one step at a time: after two slow windows
+// in a row, and a scale that proved too slow isn't tried again for 20 seconds. Hunting back and
+// forth would make the whole picture pop.
 
 export type Pacing = 'display' | 'floor' | 'saver';
 
@@ -37,6 +39,12 @@ export class Governor {
   private gpuN = 0;
   private windowStart = 0;
   private coolUntil = 0;
+  /** Consecutive windows under 60 fps, and with room to spare. */
+  private slow = 0;
+  private easy = 0;
+  /** A render scale that ran under 60 fps, and until when not to try it again. */
+  private tooSlowScale = Infinity;
+  private tooSlowUntil = 0;
 
   constructor(readonly knobs: Knobs) {}
 
@@ -88,53 +96,66 @@ export class Governor {
     const roomy = timed ? gpu < targetMs * 0.55 && median < targetMs * 1.05 : median < targetMs * 1.04 && p90 < targetMs * 1.3;
 
     if (belowFloor) {
-      this.lower(true, rtActive);
-      if (p90 > 30) this.lower(true, rtActive);
+      this.easy = 0;
+      this.slow++;
+      // The ray budget goes first and at once; what you can see only after a second slow window.
+      if (!this.lowerBudget(rtActive) && this.slow >= 2) {
+        this.lowerVisible(now);
+        this.slow = 0;
+      }
       this.coolUntil = now + 3000;
     } else if (belowTarget && this.pacing === 'display' && this.targetFps > FLOOR_FPS) {
-      this.lower(false, rtActive);
+      this.slow = this.easy = 0;
+      this.lowerBudget(rtActive);
       this.coolUntil = now + 3000;
     } else if (roomy && now > this.coolUntil) {
-      this.raise(rtActive);
-      this.coolUntil = now + 1200;
+      this.slow = 0;
+      if (++this.easy >= 3) {
+        this.raise(now, rtActive);
+        this.easy = 0;
+        this.coolUntil = now + 1200;
+      }
+    } else {
+      this.slow = this.easy = 0;
     }
   }
 
-  /** hard: allowed to trade more quality away, because we're under 60 fps. */
-  private lower(hard: boolean, rtActive: boolean): void {
+  /** Halves the ray budget; false when it's already at the minimum (or nothing is being traced). */
+  private lowerBudget(rtActive: boolean): boolean {
     const k = this.knobs;
-    if (rtActive && k.rtRows > k.rtMin) {
-      k.rtRows = Math.max(k.rtMin, Math.floor(k.rtRows / 2));
-      this.lastChange = 'Lowered ray budget';
-      return;
-    }
-    const scaleFloor = hard ? k.minScale : Math.max(k.minScale, 0.75);
-    if (k.scale > scaleFloor + 1e-3) {
-      k.scale = Math.max(scaleFloor, round2(k.scale - 0.1));
+    if (!rtActive || k.rtRows <= k.rtMin) return false;
+    k.rtRows = Math.max(k.rtMin, Math.floor(k.rtRows / 2));
+    this.lastChange = 'Lowered ray budget';
+    return true;
+  }
+
+  /** Only when under 60 fps: render scale, then sub-pixel splats (which fade), then bloom (which fades). */
+  private lowerVisible(now: number): void {
+    const k = this.knobs;
+    if (k.scale > k.minScale + 1e-3) {
+      this.tooSlowScale = k.scale;
+      this.tooSlowUntil = now + 20000;
+      k.scale = Math.max(k.minScale, round2(k.scale - 0.1));
       this.lastChange = 'Lowered render scale';
-      return;
-    }
-    if (k.minPx < (hard ? 2 : 0.5)) {
+    } else if (k.minPx < 2) {
       k.minPx += 0.5;
-      this.lastChange = 'Skipping sub-pixel splats';
-      return;
-    }
-    if (hard && k.bloom) {
+      this.lastChange = 'Fading out sub-pixel splats';
+    } else if (k.bloom) {
       k.bloom = false;
       this.lastChange = 'Bloom off';
     }
   }
 
-  private raise(rtActive: boolean): void {
-    const k = this.knobs;
+  private raise(now: number, rtActive: boolean): void {
+    const k = this.knobs, next = round2(k.scale + 0.1);
     if (!k.bloom && this.bloomWanted) {
       k.bloom = true;
       this.lastChange = 'Bloom back on';
     } else if (k.minPx > 0) {
       k.minPx = Math.max(0, k.minPx - 0.5);
       this.lastChange = 'Restored fine splats';
-    } else if (k.scale < k.maxScale - 1e-3) {
-      k.scale = Math.min(k.maxScale, round2(k.scale + 0.1));
+    } else if (k.scale < k.maxScale - 1e-3 && (next < this.tooSlowScale - 1e-3 || now > this.tooSlowUntil)) {
+      k.scale = Math.min(k.maxScale, next);
       this.lastChange = 'Raised render scale';
     } else if (rtActive && k.rtRows < k.rtMax) {
       k.rtRows = Math.min(k.rtMax, k.rtRows * 2);

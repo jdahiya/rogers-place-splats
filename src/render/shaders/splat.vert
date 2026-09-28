@@ -13,6 +13,7 @@ precision highp usampler2D;
 uniform usampler2D u_tex;
 uniform usampler2D u_sh;     // higher-order spherical harmonics, 512 splats per row
 uniform sampler2D u_light;   // ray-traced lighting per splat, RGB = light / 2
+uniform ivec4 u_lightLayout; // its interleaved layout: interior count, total, interior rows, exterior rows
 uniform mat4 u_proj;
 uniform mat4 u_view;
 uniform vec2 u_focal;
@@ -24,7 +25,8 @@ uniform int u_shDegree;
 uniform int u_shTexels;
 uniform int u_aa;            // 0 none, 1 anti-aliased (0.3 dilation), 2 Mip-Splatting (0.1 dilation)
 uniform float u_useLight;
-uniform float u_minPx;       // splats smaller than this many pixels are skipped
+uniform float u_lightMix;    // 0..1: fades the ray-traced lighting in and out
+uniform float u_minPx;       // splats smaller than this many pixels fade out (none below half of it)
 uniform float u_fogD;
 uniform float u_nightGlow;   // 1 at night, 0 at noon: outdoor lights fade in daylight
 uniform vec3 u_fogC;
@@ -99,6 +101,13 @@ vec3 octDecode(uint nc) {
 
 void cull() { gl_Position = vec4(0.0, 0.0, 2.0, 1.0); }
 
+/** Where splat i's light is: band splat j at column j / rows, row j % rows (see lighting.ts). */
+ivec2 lightTexel(int i) {
+  if (i < u_lightLayout.x) return ivec2(i / u_lightLayout.z, i % u_lightLayout.z);
+  int j = i - u_lightLayout.x;
+  return ivec2(j / u_lightLayout.w, u_lightLayout.z + j % u_lightLayout.w);
+}
+
 void main() {
   ivec2 tc = ivec2(int((a_idx & 1023u) << 1), int(a_idx >> 10));
   uvec4 c = texelFetch(u_tex, tc, 0);
@@ -107,12 +116,16 @@ void main() {
   vec3 wp = uintBitsToFloat(c.xyz);
   vec4 cam = u_view * vec4(wp, 1.0);
   vec4 clip = u_proj * cam;
-  float lim = 1.2 * clip.w;
-  // Near plane at 0.2 m, as in the reference rasteriser.
-  if (cam.z > -0.2 || clip.x < -lim || clip.x > lim || clip.y < -lim || clip.y > lim) { cull(); return; }
-
   uvec4 h = texelFetch(u_tex, tc + ivec2(1, 0), 0);
   vec2 u1 = unpackHalf2x16(h.x), u2 = unpackHalf2x16(h.y), u3 = unpackHalf2x16(h.z);
+  // Cull by footprint rather than by centre, so big splats don't pop in at the edges of the view:
+  // keep anything whose 3σ sphere (σ² is at most the covariance's trace) can reach the frustum.
+  // Near plane at 0.2 m, as in the reference rasteriser.
+  float r3 = 3.0 * sqrt(max(u1.x + u2.y + u3.y, 0.0));
+  float limX = 1.02 * clip.w + (u_proj[0][0] + 1.0) * r3, limY = 1.02 * clip.w + (u_proj[1][1] + 1.0) * r3;
+  if (cam.z > -0.2 || abs(clip.x) > limX || abs(clip.y) > limY) { cull(); return; }
+  // Fade splats out over the last 40 cm instead of snapping them off at the near plane.
+  opacity *= smoothstep(0.2, 0.6, -cam.z);
   mat3 V = mat3(u1.x, u1.y, u2.x, u1.y, u2.y, u3.x, u2.x, u3.x, u3.y);
   mat3 W = mat3(u_view);
   mat3 C = W * V * transpose(W);
@@ -159,8 +172,9 @@ void main() {
   float mid = 0.5 * (a + d), rad = length(vec2(0.5 * (a - d), b));
   float l1 = mid + rad, l2 = mid - rad;
   if (l2 < 0.0) { cull(); return; }
-  float extent = sqrt(2.0 * l1);
-  if (extent * pxPerUnit < u_minPx) { cull(); return; }
+  float extent = sqrt(2.0 * l1), px = extent * pxPerUnit;
+  if (px < 0.5 * u_minPx) { cull(); return; }
+  if (u_minPx > 0.0) opacity *= smoothstep(0.5 * u_minPx, u_minPx, px);
   vec2 e1 = abs(b) > 1e-8 * max(a, d) ? normalize(vec2(b, l1 - a)) : (a >= d ? vec2(1.0, 0.0) : vec2(0.0, 1.0));
   float cap = 1024.0 / pxPerUnit;
   vec2 major = min(extent, cap) * e1;
@@ -176,7 +190,7 @@ void main() {
     // Emissive: screens, lamps, windows. Outdoor ones dim in daylight.
     col *= inside ? gain : mix(0.35, gain, u_nightGlow);
   } else if (u_useLight > 0.5) {
-    light = texelFetch(u_light, ivec2(int(a_idx & 1023u), int(a_idx >> 10)), 0).rgb * 2.0;
+    light = mix(vec3(1.0), texelFetch(u_light, lightTexel(int(a_idx)), 0).rgb * 2.0, u_lightMix);
     col *= light;
   }
   // Glass and metal (negative gain): reflect the sky along the mirrored view direction, weighted

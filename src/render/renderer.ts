@@ -32,8 +32,13 @@ export interface FrameParams {
   fogDensity: number;
   /** Per-splat lighting from the ray tracer, or null for unlit colours. */
   lightTex: WebGLTexture | null;
+  /** 0..1: how much of the ray-traced lighting to show (it fades in and out). */
+  lightMix: number;
+  /** How lightTex is laid out (Lighting.lightLayout). */
+  lightLayout: readonly [number, number, number, number];
   minPx: number;
-  bloom: boolean;
+  /** 0..1 bloom strength (it fades rather than switching). */
+  bloom: number;
   seed: number;
   /** Tangential projection (OpenUSD, RealityKit) instead of the 3DGS perspective (EWA) projection. */
   tangential: boolean;
@@ -82,13 +87,13 @@ export class Renderer {
     this.composite = compile(gl, fullscreenVert, compositeFrag);
     this.us = uniforms(gl, this.splat, [
       'u_tex', 'u_sh', 'u_light', 'u_proj', 'u_view', 'u_focal', 'u_vp', 'u_tanFov', 'u_camPos', 'u_shRot', 'u_shDegree',
-      'u_shTexels', 'u_aa', 'u_useLight', 'u_minPx', 'u_fogD', 'u_nightGlow', 'u_fogC', 'u_sun', 'u_day', 'u_dusk', 'u_reflect',
+      'u_shTexels', 'u_aa', 'u_useLight', 'u_lightMix', 'u_lightLayout', 'u_minPx', 'u_fogD', 'u_nightGlow', 'u_fogC', 'u_sun', 'u_day', 'u_dusk', 'u_reflect',
       'u_projection',
     ] as const);
     this.uk = uniforms(gl, this.sky, ['u_r', 'u_u', 'u_f', 'u_sun', 'u_th', 'u_asp', 'u_day', 'u_dusk'] as const);
     this.ud = uniforms(gl, this.down, ['u_src', 'u_tx', 'u_th'] as const);
     this.uu = uniforms(gl, this.up, ['u_src', 'u_tx', 'u_k'] as const);
-    this.uc = uniforms(gl, this.composite, ['u_scene', 'u_bloom', 'u_bloomK', 'u_seed', 'u_look', 'u_encode'] as const);
+    this.uc = uniforms(gl, this.composite, ['u_scene', 'u_bloom', 'u_bloomK', 'u_seed', 'u_look', 'u_encode', 'u_texel', 'u_sharpen'] as const);
 
     // One quad, instanced once per splat; the instance attribute is the sorted splat index.
     this.vao = must(gl.createVertexArray(), 'a vertex array');
@@ -213,6 +218,8 @@ export class Renderer {
       gl.uniform1i(this.us.u_shTexels, asset.shTexels);
       gl.uniform1i(this.us.u_aa, asset.aa === 'mip' ? 2 : asset.aa === 'aa' ? 1 : 0);
       gl.uniform1f(this.us.u_useLight, p.lightTex ? 1 : 0);
+      gl.uniform1f(this.us.u_lightMix, p.lightMix);
+      gl.uniform4i(this.us.u_lightLayout, ...p.lightLayout);
       gl.uniform1f(this.us.u_minPx, p.minPx);
       gl.uniform1f(this.us.u_fogD, p.fogDensity);
       gl.uniform1f(this.us.u_nightGlow, p.nightGlow);
@@ -227,7 +234,7 @@ export class Renderer {
       gl.disable(gl.BLEND);
     }
 
-    const bloom = p.bloom && p.look && this.hdr && this.mips.length === BLOOM_LEVELS;
+    const bloom = p.bloom > 0.002 && p.look && this.hdr && this.mips.length === BLOOM_LEVELS;
     if (bloom) {
       gl.useProgram(this.down);
       gl.activeTexture(gl.TEXTURE0);
@@ -267,8 +274,11 @@ export class Renderer {
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, bloom ? this.mips[0]!.tex : this.neutral);
     gl.uniform1i(this.uc.u_bloom, 1);
-    gl.uniform1f(this.uc.u_bloomK, bloom ? 0.6 : 0);
+    gl.uniform1f(this.uc.u_bloomK, bloom ? 0.6 * p.bloom : 0);
     gl.uniform1f(this.uc.u_seed, p.seed);
+    gl.uniform2f(this.uc.u_texel, 1 / sceneW, 1 / sceneH);
+    // Contrast-adaptive sharpening for the generated scene (more when rendering below full size).
+    gl.uniform1f(this.uc.u_sharpen, p.look ? Math.min(1, 0.45 + 0.8 * (1 - sceneW / Math.max(1, outW))) : 0);
     gl.uniform1f(this.uc.u_look, p.look ? 1 : 0);
     gl.uniform1f(this.uc.u_encode, asset.linear ? 1 : 0);
     this.fullscreen();

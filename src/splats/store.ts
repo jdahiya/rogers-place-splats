@@ -45,6 +45,28 @@ export class SplatStore {
 
 export const store = new SplatStore();
 
+/** Removes the splats at the given (ascending) indices, keeping the rest in order. */
+export function removeSplats(indices: readonly number[]): void {
+  if (!indices.length) return;
+  const s = store;
+  let w = 0, r = 0;
+  for (let i = 0; i < s.count; i++) {
+    if (r < indices.length && indices[r] === i) {
+      r++;
+      continue;
+    }
+    if (w !== i) {
+      s.pos.copyWithin(w * 3, i * 3, i * 3 + 3);
+      s.cov.copyWithin(w * 6, i * 6, i * 6 + 6);
+      s.col.copyWithin(w * 4, i * 4, i * 4 + 4);
+      s.em[w] = s.em[i]!;
+      s.nrm[w] = s.nrm[i]!;
+    }
+    w++;
+  }
+  s.count = w;
+}
+
 /** How a capture was trained to be filtered (Kerbl et al. 2024 update / Mip-Splatting). */
 export type AntiAliasing = 'none' | 'aa' | 'mip';
 

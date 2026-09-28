@@ -5,7 +5,9 @@
 //    traces direct light and indirect rays against the previous cache pass, then stores the light
 //    it sends back out. Each full pass adds a bounce.
 // 2. Final gather: a band of splats per frame, lit by direct light plus indirect rays read against
-//    the cache. One light value per splat, averaged over passes.
+//    the cache. One light value per splat, averaged over passes. The light texture is laid out
+//    interleaved (see lightLayout), so each row of it holds splats from all over the scene and a
+//    pass dissolves in evenly instead of sweeping across the scene region by region.
 import cacheFrag from './shaders/cache.frag';
 import fullscreenVert from './shaders/fullscreen.vert';
 import lightingFrag from './shaders/lighting.frag';
@@ -54,6 +56,11 @@ export class Lighting {
   ready = false;
   rows = 1;
   interiorRows = 0;
+  /**
+   * Interior splat count, total count, interior rows, exterior rows. Within a band of n splats
+   * over R rows, the band's splat j is lit in column floor(j / R), row j mod R.
+   */
+  lightLayout: [number, number, number, number] = [0, 0, 0, 0];
 
   private readonly gatherFb: WebGLFramebuffer;
   private readonly cacheFb: WebGLFramebuffer;
@@ -65,7 +72,6 @@ export class Lighting {
   private readonly radFormat: { internal: number; type: number; scale: number };
   private fine: GridGpu | null = null;
   private coarse: GridGpu | null = null;
-  private count = 0;
   private frame = 0;
   private readonly cdf = new Float32Array(16);
   private readonly cycles: Record<Band, number> = { int: 0, ext: 0 };
@@ -79,7 +85,7 @@ export class Lighting {
   constructor(private readonly gl: WebGL2RenderingContext, hdr: boolean) {
     this.gather = compile(gl, fullscreenVert, withTrace(lightingFrag));
     this.cache = compile(gl, fullscreenVert, withTrace(cacheFrag));
-    this.ug = uniforms(gl, this.gather, [...TRACE_UNIFORMS, 'u_tex', 'u_n', 'u_rays'] as const);
+    this.ug = uniforms(gl, this.gather, [...TRACE_UNIFORMS, 'u_tex', 'u_layout', 'u_rays'] as const);
     this.uc = uniforms(gl, this.cache, [...TRACE_UNIFORMS, 'u_selfGeo', 'u_selfAlb', 'u_selfRad', 'u_selfMin', 'u_selfVoxel', 'u_layer', 'u_cacheRays', 'u_blend'] as const);
     this.tex = must(gl.createTexture(), 'a texture');
     this.gatherFb = must(gl.createFramebuffer(), 'a framebuffer');
@@ -94,9 +100,10 @@ export class Lighting {
   /** Allocates the per-splat light texture for a new scene and fills it with neutral light (1.0). */
   reset(count: number, interiorCount: number): void {
     const gl = this.gl;
-    this.count = count;
-    this.rows = Math.max(1, Math.ceil(count / 1024));
     this.interiorRows = Math.ceil(interiorCount / 1024);
+    const exteriorRows = Math.ceil((count - interiorCount) / 1024);
+    this.rows = Math.max(1, this.interiorRows + exteriorRows);
+    this.lightLayout = [interiorCount, count, this.interiorRows, exteriorRows];
     gl.bindTexture(gl.TEXTURE_2D, this.tex);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1024, this.rows, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
@@ -222,7 +229,7 @@ export class Lighting {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, dataTex);
     gl.uniform1i(u.u_tex, 0);
-    gl.uniform1i(u.u_n, this.count);
+    gl.uniform4i(u.u_layout, ...this.lightLayout);
     gl.uniform1i(u.u_rays, budget.rays);
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.gatherFb);
     gl.enable(gl.BLEND);

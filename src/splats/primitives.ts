@@ -1,7 +1,7 @@
 // Shaped splat helpers: oriented discs, blobs, lines, rectangles and rasterised canvases.
 import type { Vec3 } from '../util/math';
 import { rng } from '../util/random';
-import { glow, put, setJitter, setNormalBits, store } from './store';
+import { glow, put, removeSplats, setJitter, setNormalBits, store } from './store';
 
 /** [r, g, b], [r, g, b, a] or [r, g, b, a, gain]. */
 export type Color = readonly number[];
@@ -249,8 +249,9 @@ export type Placer = (X: number, Y: number, size: number, back: number, r: numbe
 /**
  * Turns a rasterised drawing into splats: one per pixel, except over the rectangles it marked for
  * detail, which are redrawn finer. Inside an ice-reflection range, those rectangles also keep
- * their coarse pixels 3 cm behind the face, for the reflection to copy, and the fine splats stay
- * out of the reflection. pxSize is the height of one of the drawing's pixels in metres.
+ * their coarse pixels for the reflection to copy (buildReflections then removes them), and the
+ * fine splats stay out of the reflection. pxSize is the height of one of the drawing's pixels in
+ * metres.
  */
 export function splatDrawing(raster: Raster, W: number, H: number, pxSize: number, draw: Draw2D, place: Placer): void {
   const { px, detail } = raster, tiles = planTiles(detail, W, H, pxSize), proxies = reflecting > 0;
@@ -261,6 +262,7 @@ export function splatDrawing(raster: Raster, W: number, H: number, pxSize: numbe
       const tiled = tiles.some((t) => i >= t.x0 && i < t.x1 && j >= t.y0 && j < t.y1);
       if (tiled && !proxies) continue;
       place(i + 0.5, j + 0.5, 1, tiled ? 0.03 : 0, px[q]! / 255, px[q + 1]! / 255, px[q + 2]! / 255, px[q + 3]! / 255);
+      if (tiled) standIns.push(store.count - 1);
     }
   }
   if (!tiles.length) return;
@@ -310,11 +312,14 @@ export function canvasPanel(o: Vec3, u: Vec3, v: Vec3, w: number, h: number, sp:
 const mirrorRanges: [number, number][] = [];
 /** Splats inside mirrored ranges that stay out of the reflection (fine detail with coarse stand-ins). */
 const noMirror: [number, number][] = [];
+/** The coarse stand-ins themselves: the reflection copies them, then they're removed. */
+const standIns: number[] = [];
 let reflecting = 0;
 
 export function resetReflections(): void {
   mirrorRanges.length = 0;
   noMirror.length = 0;
+  standIns.length = 0;
   reflecting = 0;
 }
 
@@ -336,6 +341,9 @@ export function buildReflections(fade: number, blur: number): void {
       if (store.pos[i * 3 + 1]! > 0.05 && !skip.some(([a, b]) => i >= a && i < b)) mirror(i, fade, blur);
     }
   }
+  // The coarse stand-ins behind fine detail have done their job; drawing them too would be waste.
+  removeSplats(standIns);
+  standIns.length = 0;
 }
 
 function mirror(i: number, fade: number, blur: number): void {

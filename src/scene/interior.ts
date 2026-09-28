@@ -383,7 +383,10 @@ function ribbonBoard(d: number, y0: number, h: number, k: number): void {
   const su = L / W, sv = h / rows;
   const old = setJitter(0.02);
   glow(1.45);
-  splatDrawing(rasterize(W, rows, drawStrip), W, rows, sv, drawStrip, (X, Y, size, back, r, g, b, a) => {
+  const raster = rasterize(W, rows, drawStrip);
+  // Lettering at twice the board's resolution (not on the lightest setting).
+  if (k <= 1.2) raster.detail.unshift({ x: 0, y: 0, w: W, h: rows, px: rows * 2 });
+  splatDrawing(raster, W, rows, sv, drawStrip, (X, Y, size, back, r, g, b, a) => {
     const p = ringPoint(d, (X / W) * L), y = y0 + (1 - Y / rows) * h;
     S(p.x + p.nx * back, y, p.z + p.nz * back, -p.nz, 0, p.nx, 0, 1, 0, su * 0.64 * size, sv * 0.64 * size, 0.02, r, g, b, a);
   });
@@ -510,6 +513,8 @@ function buildRoofInterior(k: number, dBack: number): void {
 function buildScoreboard(k: number): void {
   const done = reflectFrom();
   const hx = 5.4, hz = 4.6, yb = 20.9, yt = 27.3, sp = 0.11 * Math.sqrt(k);
+  // Lettering splatted finer than the panels (not on the lightest setting).
+  const sharp = k > 1.2 ? 1 / 3 : 1;
   const black = (): Color => [0.03, 0.03, 0.035];
   panel(-hx, yb, hz - 0.08, 1, 0, 0, 0, 1, 0, 2 * hx, yt - yb, 0.3, black);
   panel(hx, yb, -hz + 0.08, -1, 0, 0, 0, 1, 0, 2 * hx, yt - yb, 0.3, black);
@@ -519,24 +524,24 @@ function buildScoreboard(k: number): void {
   panel(-hx, yt + 1.8, -hz, 1, 0, 0, 0, 0, 1, 2 * hx, 2 * hz, 0.4, black);
 
   const ys = yb + 0.25, hs = yt - yb - 0.5;
-  canvasPanel([-hx + 0.25, ys, hz], [1, 0, 0], [0, 1, 0], 2 * hx - 0.5, hs, sp, drawScore, 1.5);
-  canvasPanel([hx - 0.25, ys, -hz], [-1, 0, 0], [0, 1, 0], 2 * hx - 0.5, hs, sp, drawScore, 1.5);
-  canvasPanel([hx, ys, hz - 0.25], [0, 0, -1], [0, 1, 0], 2 * hz - 0.5, hs, sp, drawScore, 1.5);
-  canvasPanel([-hx, ys, -hz + 0.25], [0, 0, 1], [0, 1, 0], 2 * hz - 0.5, hs, sp, drawScore, 1.5);
+  canvasPanel([-hx + 0.25, ys, hz], [1, 0, 0], [0, 1, 0], 2 * hx - 0.5, hs, sp, drawScore, 1.5, 1, sharp * 3);
+  canvasPanel([hx - 0.25, ys, -hz], [-1, 0, 0], [0, 1, 0], 2 * hx - 0.5, hs, sp, drawScore, 1.5, 1, sharp * 3);
+  canvasPanel([hx, ys, hz - 0.25], [0, 0, -1], [0, 1, 0], 2 * hz - 0.5, hs, sp, drawScore, 1.5, 1, sharp * 3);
+  canvasPanel([-hx, ys, -hz + 0.25], [0, 0, 1], [0, 1, 0], 2 * hz - 0.5, hs, sp, drawScore, 1.5, 1, sharp * 3);
 
   // Crown, leaning outward.
   const lean = 0.38, cl = Math.hypot(lean, 1), up = 1 / cl, out = lean / cl, ch = 1.9, cs = 0.1;
-  canvasPanel([-hx, yt, hz], [1, 0, 0], [0, up, out], 2 * hx, ch, cs, drawCrown, 1.6);
-  canvasPanel([hx, yt, -hz], [-1, 0, 0], [0, up, -out], 2 * hx, ch, cs, drawCrown, 1.6);
-  canvasPanel([hx, yt, hz], [0, 0, -1], [out, up, 0], 2 * hz, ch, cs, drawCrown, 1.6);
-  canvasPanel([-hx, yt, -hz], [0, 0, 1], [-out, up, 0], 2 * hz, ch, cs, drawCrown, 1.6);
+  canvasPanel([-hx, yt, hz], [1, 0, 0], [0, up, out], 2 * hx, ch, cs, drawCrown, 1.6, 1, sharp * 2);
+  canvasPanel([hx, yt, -hz], [-1, 0, 0], [0, up, -out], 2 * hx, ch, cs, drawCrown, 1.6, 1, sharp * 2);
+  canvasPanel([hx, yt, hz], [0, 0, -1], [out, up, 0], 2 * hz, ch, cs, drawCrown, 1.6, 1, sharp * 2);
+  canvasPanel([-hx, yt, -hz], [0, 0, 1], [-out, up, 0], 2 * hz, ch, cs, drawCrown, 1.6, 1, sharp * 2);
 
   // White ring underneath.
   const rx = hx - 0.4, rz = hz - 0.4, ry = yb - 1.2, rh = 1.1, rs = 0.09;
-  canvasPanel([-rx, ry, rz], [1, 0, 0], [0, 1, 0], 2 * rx, rh, rs, drawScoreRing, 1.25);
-  canvasPanel([rx, ry, -rz], [-1, 0, 0], [0, 1, 0], 2 * rx, rh, rs, drawScoreRing, 1.25);
-  canvasPanel([rx, ry, rz], [0, 0, -1], [0, 1, 0], 2 * rz, rh, rs, drawScoreRing, 1.25);
-  canvasPanel([-rx, ry, -rz], [0, 0, 1], [0, 1, 0], 2 * rz, rh, rs, drawScoreRing, 1.25);
+  canvasPanel([-rx, ry, rz], [1, 0, 0], [0, 1, 0], 2 * rx, rh, rs, drawScoreRing, 1.25, 1, sharp * 3);
+  canvasPanel([rx, ry, -rz], [-1, 0, 0], [0, 1, 0], 2 * rx, rh, rs, drawScoreRing, 1.25, 1, sharp * 3);
+  canvasPanel([rx, ry, rz], [0, 0, -1], [0, 1, 0], 2 * rz, rh, rs, drawScoreRing, 1.25, 1, sharp * 3);
+  canvasPanel([-rx, ry, -rz], [0, 0, 1], [0, 1, 0], 2 * rz, rh, rs, drawScoreRing, 1.25, 1, sharp * 3);
   panel(-rx, ry, -rz, 1, 0, 0, 0, 0, 1, 2 * rx, 2 * rz, 0.4, black);
   done();
   for (const [cx, cz] of [[-hx, -hz], [hx, -hz], [-hx, hz], [hx, hz]] as const) {
@@ -553,12 +558,12 @@ function buildBanners(k: number): void {
   // Retired numbers over the east end, Stanley Cup years over the west end.
   [3, 4, 7, 9, 11, 17, 31, 99].forEach((n, i) => {
     const zc = -11.55 + i * 3.3;
-    canvasPanel([48, yb, zc - W / 2], [0, 0, 1], [0, 1, 0], W, H, sp, drawRetired(n));
+    canvasPanel([48, yb, zc - W / 2], [0, 0, 1], [0, 1, 0], W, H, sp, drawRetired(n), 1, 1, k > 1.2 ? 1 : 2);
     hang(48, zc - W / 2, zc + W / 2);
   });
   [1984, 1985, 1987, 1988, 1990].forEach((year, i) => {
     const zc = -8 + i * 4;
-    canvasPanel([-48, yb, zc + W / 2], [0, 0, -1], [0, 1, 0], W, H, sp, drawCup(year));
+    canvasPanel([-48, yb, zc + W / 2], [0, 0, -1], [0, 1, 0], W, H, sp, drawCup(year), 1, 1, k > 1.2 ? 1 : 2);
     hang(-48, zc - W / 2, zc + W / 2);
   });
 }

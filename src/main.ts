@@ -27,14 +27,14 @@ const IS_PHONE = matchMedia('(pointer: coarse)').matches && Math.min(screen.widt
 /** Starting points per device class; the governor adapts from here to hold 60 fps or more. */
 const PROFILE = IS_PHONE
   ? {
-      knobs: { scale: 0.8, minScale: 0.5, maxScale: 1, dpr: 1.5, rtRows: 16, rtMin: 2, rtMax: 64, minPx: 0, bloom: true },
+      knobs: { scale: 0.75, minScale: 0.5, maxScale: 1, dpr: 2, rtRows: 16, rtMin: 2, rtMax: 64, minPx: 0, bloom: true },
       rays: { rays: 2, cacheRays: 2, lightSamples: 1, steps: 28 },
       voxel: { fine: 2, coarse: 8 },
       cycles: 8,
       density: 0.5,
     }
   : {
-      knobs: { scale: 1, minScale: 0.5, maxScale: 1, dpr: 1.5, rtRows: 96, rtMin: 8, rtMax: 512, minPx: 0, bloom: true },
+      knobs: { scale: 1, minScale: 0.5, maxScale: 1, dpr: 2, rtRows: 96, rtMin: 8, rtMax: 512, minPx: 0, bloom: true },
       rays: { rays: 3, cacheRays: 3, lightSamples: 2, steps: 56 },
       voxel: { fine: 1, coarse: 4 },
       cycles: 12,
@@ -67,6 +67,10 @@ let lastRaf = 0;
 let lastRender = 0;
 let forceRender = true;
 let sortArrived = false;
+/** What's on screen eases toward the governor's settings rather than switching (no popping). */
+let bloomLevel = 1;
+let lightLevel = 0;
+let minPxLevel = 0;
 let frameSeed = 0;
 let idleSampler = 0;
 let sceneW = 1;
@@ -227,7 +231,17 @@ function frame(now: number): void {
   let moved = false;
   for (let i = 0; i < 8 && !moved; i++) moved = !(Math.abs(key[i]! - lastView[i]!) < 1e-6);
   const relighting = rtEnabled && lighting.active;
-  const busy = forceRender || moved || sortArrived || relighting || flying === 'moving' || autoSpin || keyMoved || show.active;
+  // Bloom, the ray-traced lighting and the sub-pixel cutoff fade over about a quarter of a second.
+  const ease = 1 - Math.exp(-dt * 8);
+  const bloomTo = k.bloom ? 1 : 0, lightTo = rtEnabled && lighting.ready ? 1 : 0;
+  bloomLevel += (bloomTo - bloomLevel) * ease;
+  lightLevel += (lightTo - lightLevel) * ease;
+  minPxLevel += (k.minPx - minPxLevel) * ease;
+  if (Math.abs(bloomTo - bloomLevel) < 0.002) bloomLevel = bloomTo;
+  if (Math.abs(lightTo - lightLevel) < 0.002) lightLevel = lightTo;
+  if (Math.abs(k.minPx - minPxLevel) < 0.01) minPxLevel = k.minPx;
+  const fading = bloomLevel !== bloomTo || lightLevel !== lightTo || minPxLevel !== k.minPx;
+  const busy = forceRender || moved || sortArrived || relighting || fading || flying === 'moving' || autoSpin || keyMoved || show.active;
   if (!busy) {
     sample(now);
     if (++idleFrames > 45) sleep();
@@ -268,8 +282,8 @@ function frame(now: number): void {
       look: !custom,
       sun: sun.dir, day: sun.day, dusk: sun.dusk, nightGlow: sun.nightGlow,
       fogColor: air.color, fogDensity: air.density,
-      lightTex: rtEnabled && lighting.ready ? lighting.tex : null,
-      minPx: k.minPx, bloom: k.bloom, seed: frameSeed, tangential,
+      lightTex: lighting.ready && lightLevel > 0 ? lighting.tex : null, lightMix: lightLevel, lightLayout: lighting.lightLayout,
+      minPx: minPxLevel, bloom: bloomLevel, seed: frameSeed, tangential,
     },
     sceneW, sceneH, canvas.width, canvas.height,
   );
@@ -305,7 +319,6 @@ async function buildArena(): Promise<void> {
   showLoading('Placing splats', 'Building the arena…');
   await nextPaint();
   const t0 = performance.now();
-  governor.knobs.dpr = !IS_PHONE && density >= 2 ? 2 : 1.5;
   const scene = buildScene(density);
   custom = false;
   setCustomUi(false);

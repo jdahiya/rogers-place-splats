@@ -4,27 +4,31 @@ precision highp int;
 precision highp sampler3D;
 precision highp usampler2D;
 
-// Final gather: lights every splat from the radiance cache. Each fragment is one splat (same
-// 1024-per-row layout as the splat data texture). Direct light comes from shadow rays; indirect
-// light (sky and every bounce) from rays read against the cache. RGBA = light / 2, blended over
-// frames so the noise from a few rays per pass averages out.
+// Final gather: lights every splat from the radiance cache. Each fragment is one splat, in the
+// interleaved layout described in lighting.ts, so a row of fragments holds splats from all over
+// the scene. Direct light comes from shadow rays; indirect light (sky and every bounce) from rays
+// read against the cache. RGBA = light / 2, blended over frames so the noise from a few rays per
+// pass averages out.
 
 #include "trace.glsl"
 
 uniform usampler2D u_tex;
-uniform int u_n;
+uniform ivec4 u_layout;   // interior count, total count, interior rows, exterior rows
 uniform int u_rays;
 out vec4 o;
 
 void main() {
   int col = int(gl_FragCoord.x), row = int(gl_FragCoord.y);
-  int idx = row * 1024 + col;
-  if (idx >= u_n) {
+  bool interior = row < u_layout.z;
+  int j = interior ? col * u_layout.z + row : col * u_layout.w + (row - u_layout.z);
+  if (j >= (interior ? u_layout.x : u_layout.y - u_layout.x)) {
     o = vec4(0.5);
     return;
   }
-  uvec4 t0 = texelFetch(u_tex, ivec2(col * 2, row), 0);
-  uvec4 t1 = texelFetch(u_tex, ivec2(col * 2 + 1, row), 0);
+  int idx = interior ? j : u_layout.x + j;
+  ivec2 at = ivec2((idx & 1023) * 2, idx >> 10);
+  uvec4 t0 = texelFetch(u_tex, at, 0);
+  uvec4 t1 = texelFetch(u_tex, at + ivec2(1, 0), 0);
   if (unpackHalf2x16(t1.w).x > 1.01) {
     o = vec4(0.5); // emissive: not lit
     return;
