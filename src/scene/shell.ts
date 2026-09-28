@@ -4,7 +4,7 @@
 // a glass podium, and Ford Hall as the glass atrium under the tail.
 import { PI, clamp, smoothstep, type RGB } from '../util/math';
 import { hash, pick, rng, rr, wpick } from '../util/random';
-import { S, SC, blob, canvasPanel, ell, lightBlob, panel, type Color } from '../splats/primitives';
+import { S, SC, blob, canvasPanel, lightBlob, line, panel, type Color } from '../splats/primitives';
 import { RR, SHELL, SX, SZ, roofY, sdRR, walk } from './arena';
 import { FAN_SHIRTS, HAIR, PANTS, SKIN } from './palette';
 import { drawFord, drawHallBanner, drawWordmark } from './screens';
@@ -136,7 +136,7 @@ function skinMaterial(u: number, y: number, top: number, p: number, q: number): 
 function buildSkin(k: number): void {
   const ring = outline(0.25), L = ring.total;
   const period = L / Math.round(L / 2.2), half = period / 2; // the diamonds' diagonals
-  const n = Math.max(2, Math.round(3 / k)), sigma = (0.42 * period) / n, maxY = 50;
+  const n = Math.max(3, Math.round(4.6 / k)), sigma = (0.42 * period) / n, maxY = 50;
   // Panel (p, q) covers (a + y) / period in [p, p + 1) and (a - y) / period in [q, q + 1).
   for (let p = 0; p < Math.ceil((L + maxY) / period); p++) {
     for (let q = Math.floor(-maxY / period) - 1; q < Math.ceil(L / period); q++) {
@@ -171,12 +171,13 @@ function buildSkin(k: number): void {
       }
     }
   }
-  // Silver rim along the roof edge, a white soffit under the lower lip, and downlights in it.
-  const step = 0.8 * k;
-  for (const o of outline(step).pts) {
+  // Silver rim along the roof edge, and the white soffit under the skin's lower lip (which sticks
+  // out 1.8 m past the glass), with downlights in it.
+  const fs = 0.3 * k;
+  for (const o of outline(fs).pts) {
     const top = envelopeTop(o.x, o.z), bottom = podiumTop(o.x, o.z, o.u), tx = -o.nz, tz = o.nx;
-    S(o.x, top + 0.1, o.z, tx, 0, tz, o.nx, 0, o.nz, step * 0.72, 0.6, 0.05, ...SILVER);
-    S(o.x + o.nx * 0.9, bottom, o.z + o.nz * 0.9, tx, 0, tz, o.nx, 0, o.nz, step * 0.72, bottom > 9 ? 1.8 : 1.0, 0.04, 0.8, 0.81, 0.83);
+    S(o.x, top + 0.1, o.z, tx, 0, tz, o.nx, 0, o.nz, fs * 0.72, 0.6, 0.05, ...SILVER);
+    for (let d = fs / 2; d < 1.8; d += fs) S(o.x + o.nx * d, bottom, o.z + o.nz * d, tx, 0, tz, o.nx, 0, o.nz, fs * 0.7, fs * 0.7, 0.03, 0.8, 0.81, 0.83);
   }
   for (const o of outline(4).pts) lightBlob(o.x + o.nx * 0.9, podiumTop(o.x, o.z, o.u) - 0.15, o.z + o.nz * 0.9, 0.12, 1, 0.9, 0.75, 3, 3);
 }
@@ -184,24 +185,29 @@ function buildSkin(k: number): void {
 // ---- Glass podium and concourse ---------------------------------------------------------------
 
 function buildPodium(k: number): void {
-  const gsp = 0.6 * k;
-  let arc = 0;
-  for (const p of outline(gsp).pts) {
-    arc += gsp;
+  // Glass on a fine grid: reflective, and faintly see-through to the lit concourse behind.
+  const gs = 0.3 * k;
+  for (const p of outline(gs).pts) {
     const top = podiumTop(p.x, p.z, p.u), tx = -p.nz, tz = p.nx;
-    const mullion = Math.floor(arc / 1.5) !== Math.floor((arc - gsp) / 1.5);
-    for (let y = gsp / 2; y < top; y += gsp) {
-      const transom = Math.abs(y - 4.5) < gsp * 0.5 || top - y < gsp * 0.5;
-      if (mullion || transom) S(p.x, y, p.z, tx, 0, tz, 0, 1, 0, gsp * 0.62, gsp * 0.62, 0.03, 0.07, 0.08, 0.09, 0.95);
-      else {
-        const q = y / top;
-        SC(p.x, y, p.z, tx, 0, tz, 0, 1, 0, gsp * 0.66, gsp * 0.66, 0.02, [0.1 + 0.06 * q, 0.14 + 0.07 * q, 0.2 + 0.1 * q, 0.45, -0.15]);
-      }
+    for (let y = gs / 2; y < top; y += gs) {
+      const q = y / top;
+      SC(p.x, y, p.z, tx, 0, tz, 0, 1, 0, gs * 0.66, gs * 0.66, 0.02, [0.1 + 0.06 * q, 0.14 + 0.07 * q, 0.2 + 0.1 * q, 0.45, -0.15]);
     }
+  }
+  // Slim dark frames standing just proud of the glass: mullions every 1.5 m, and a sill, a
+  // transom at 4.5 m and a head along the top.
+  const frame: RGB = [0.07, 0.08, 0.09], ms = 0.25 * k;
+  for (const p of outline(1.5).pts) {
+    const top = podiumTop(p.x, p.z, p.u), x = p.x + p.nx * 0.05, z = p.z + p.nz * 0.05;
+    line(x, 0, z, x, top, z, 0.035, ms, ...frame);
+  }
+  for (const p of outline(ms).pts) {
+    const top = podiumTop(p.x, p.z, p.u), tx = -p.nz, tz = p.nx, x = p.x + p.nx * 0.05, z = p.z + p.nz * 0.05;
+    for (const y of [0.1, 4.5, top - 0.1]) if (y <= top - 0.1) S(x, y, z, tx, 0, tz, 0, 1, 0, ms * 0.7, 0.05, 0.03, ...frame);
   }
   // "OILERS" lettering on the glass along 104 Avenue, in Oilers blue.
   const zFace = -(4.42 + 8.53 + SHELL) - 0.35;
-  canvasPanel([-12, 1.2, zFace], [-1, 0, 0], [0, 1, 0], 34, 5.6, 0.12, drawWordmark, 1, 0.97);
+  canvasPanel([-12, 1.2, zFace], [-1, 0, 0], [0, 1, 0], 34, 5.6, 0.12, drawWordmark, 1, 0.97, k > 1.2 ? 1 : 2);
 
   // The lit concourse behind the drum's glass.
   for (let x = -90; x < 90; x += 1.1 * k) {
@@ -216,29 +222,38 @@ function buildPodium(k: number): void {
 
 // ---- Roof ------------------------------------------------------------------------------------------
 
+/** The roof surface at (x, z): its height and two unit tangents, along x (u) and roughly along z (v). */
+function roofFrame(x: number, z: number): { y: number; u: [number, number, number]; v: [number, number, number] } {
+  const y = envelopeTop(x, z);
+  const gx = (envelopeTop(x + 1, z) - envelopeTop(x - 1, z)) / 2, gz = (envelopeTop(x, z + 1) - envelopeTop(x, z - 1)) / 2;
+  const ul = Math.hypot(1, gx), ux = 1 / ul, uy = gx / ul;
+  const dot = gz * uy, vx = -dot * ux, vy = gz - dot * uy, vl = Math.hypot(vx, vy, 1);
+  return { y, u: [ux, uy, 0], v: [vx / vl, vy / vl, 1 / vl] };
+}
+
 function buildRoof(k: number): void {
-  const rs = 1.4 * k;
-  for (let x = -90; x < 130; x += rs) {
-    for (let z = -100; z < 75; z += rs) {
-      const px = x + rr(0, rs), pz = z + rr(0, rs), sd = sdFootprint(px, pz);
-      if (sd > 0) continue;
-      const y = envelopeTop(px, pz);
-      const gx = (envelopeTop(px + 1, pz) - envelopeTop(px - 1, pz)) / 2, gz = (envelopeTop(px, pz + 1) - envelopeTop(px, pz - 1)) / 2;
-      const ul = Math.hypot(1, gx), ux = 1 / ul, uy = gx / ul;
-      let vx = 0, vy = gz;
-      const vz = 1, dot = vx * ux + vy * uy;
-      vx -= dot * ux;
-      vy -= dot * uy;
-      const vlen = Math.hypot(vx, vy, vz);
-      // White membrane with faint seams.
-      const seam = ((px % 6) + 6) % 6 < 0.45, b = seam ? 0.78 : 0.9 * (0.96 + 0.04 * rng());
-      S(px, y, pz, ux, uy, 0, vx / vlen, vy / vlen, vz / vlen, rs * 0.8, rs * 0.8, 0.08, b, b, b * 1.02);
+  // White membrane on a regular grid (jittered samples leave see-through gaps).
+  const rs = 0.7 * k;
+  for (let x = -90 + rs / 2; x < 130; x += rs) {
+    for (let z = -100 + rs / 2; z < 75; z += rs) {
+      if (sdFootprint(x, z) > 0) continue;
+      const { y, u, v } = roofFrame(x, z), b = 0.9 * (0.96 + 0.04 * rng());
+      S(x, y, z, ...u, ...v, rs * 0.7, rs * 0.7, 0.06, b, b, b * 1.02);
+    }
+  }
+  // Seams between the membrane's strips every 6 m, lying just on top of it.
+  const ss = 0.35 * k;
+  for (let x = -84; x < 130; x += 6) {
+    for (let z = -100 + ss / 2; z < 75; z += ss) {
+      if (sdFootprint(x, z) > -0.3) continue;
+      const { y, u, v } = roofFrame(x, z);
+      S(x, y + 0.03, z, ...v, ...u, ss * 0.7, 0.05, 0.02, 0.76, 0.77, 0.79);
     }
   }
   for (let i = 0; i < 14; i++) {
     const x = rr(-35, 35), z = rr(-14, 14), y = roofY(x, z), w = rr(2, 5), d = rr(2, 4);
-    panel(x - w / 2, y + 1.2, z - d / 2, 1, 0, 0, 0, 0, 1, w, d, 0.6, () => [0.62, 0.63, 0.65]);
-    panel(x - w / 2, y, z - d / 2, 1, 0, 0, 0, 1, 0, w, 1.2, 0.6, () => [0.52, 0.53, 0.55]);
+    panel(x - w / 2, y + 1.2, z - d / 2, 1, 0, 0, 0, 0, 1, w, d, 0.3, () => [0.62, 0.63, 0.65]);
+    panel(x - w / 2, y, z - d / 2, 1, 0, 0, 0, 1, 0, w, 1.2, 0.3, () => [0.52, 0.53, 0.55]);
   }
 }
 
@@ -257,11 +272,19 @@ function inlay(dx: number, dz: number, r: number): Color {
   return tones[(band * 3 + wedge) % tones.length]!;
 }
 
+/** A standing person, facing a random way: legs and shoes, torso and arms, head and hair. */
 export function person(x: number, z: number, y0 = 0): void {
-  ell(x, y0 + 0.45, z, 0.13, 0.42, 0.11, pick(PANTS));
-  ell(x, y0 + 1.15, z, 0.2, 0.3, 0.13, wpick(FAN_SHIRTS));
-  blob(x, y0 + 1.62, z, 0.1, ...pick(SKIN));
-  blob(x, y0 + 1.68, z, 0.09, ...pick(HAIR));
+  const s = rng() < 0.08 ? rr(0.62, 0.78) : rr(0.92, 1.08), a = rng() * 2 * PI, ax = Math.cos(a), az = Math.sin(a);
+  const shirt = wpick(FAN_SHIRTS), pants = pick(PANTS);
+  for (const sd of [-1, 1]) {
+    const lx = x + ax * 0.085 * s * sd, lz = z + az * 0.085 * s * sd;
+    S(lx, y0 + 0.47 * s, lz, ax, 0, az, 0, 1, 0, 0.065 * s, 0.4 * s, 0.07 * s, ...pants);
+    blob(lx, y0 + 0.05 * s, lz, 0.06 * s, 0.07, 0.07, 0.08);
+    S(x + ax * 0.24 * s * sd, y0 + 1.13 * s, z + az * 0.24 * s * sd, ax, 0, az, 0, 1, 0, 0.05 * s, 0.26 * s, 0.05 * s, ...shirt);
+  }
+  S(x, y0 + 1.16 * s, z, ax, 0, az, 0, 1, 0, 0.19 * s, 0.28 * s, 0.12 * s, ...shirt);
+  blob(x, y0 + 1.6 * s, z, 0.1 * s, ...pick(SKIN));
+  blob(x, y0 + 1.67 * s, z, 0.092 * s, ...pick(HAIR));
 }
 
 function buildHall(k: number): void {
@@ -314,7 +337,7 @@ function buildHall(k: number): void {
   });
   // Video wall, and the big blue feature wall hung on the drum's south-east face.
   panel(85.9, 5.6, 4.3, 0, 0, -1, 0, 1, 0, 20.6, 9.8, 0.4, () => [0.02, 0.02, 0.025]);
-  canvasPanel([86, 6, 4], [0, 0, -1], [0, 1, 0], 20, 9, 0.16 * Math.sqrt(k), drawFord, 1.4);
+  canvasPanel([86, 6, 4], [0, 0, -1], [0, 1, 0], 20, 9, 0.16 * Math.sqrt(k), drawFord, 1.4, 1, k > 1.2 ? 2 : 3);
   const th = (35 * PI) / 180, R = RR + SHELL + 0.8, nx = Math.cos(th), nz = -Math.sin(th);
   const bx = SX + R * nx - 8 * nz, bz = -SZ + R * nz + 8 * nx; // 8 m back along the wall from centre
   canvasPanel([bx, 7, bz], [nz, 0, -nx], [0, 1, 0], 16, 9, 0.2, drawHallBanner, 1.2);

@@ -265,20 +265,32 @@ export function splatDrawing(raster: Raster, W: number, H: number, pxSize: numbe
   }
   if (!tiles.length) return;
   const old = setJitter(0), start = store.count;
-  for (const t of tiles) tileSplats(W, H, draw, t, (X, Y, size, r, g, b, a) => place(X, Y, size, 0, r, g, b, a));
+  tiles.forEach((t, ti) => {
+    // Where a finer tile sits inside this one (a logo on a sharpened screen), it wins.
+    const finer = tiles.filter((o, oi) => oi !== ti && o.f > t.f);
+    tileSplats(W, H, draw, t, (X, Y, size, r, g, b, a) => {
+      if (!finer.some((o) => X >= o.x0 && X < o.x1 && Y >= o.y0 && Y < o.y1)) place(X, Y, size, 0, r, g, b, a);
+    });
+  });
   setJitter(old);
   if (proxies) noMirror.push([start, store.count]);
 }
 
-/** A 2D drawing laid on a rectangle (origin = bottom-left corner): a splat per pixel, plus its detail. */
-export function canvasPanel(o: Vec3, u: Vec3, v: Vec3, w: number, h: number, sp: number, draw: Draw2D, gain = 1, alpha = 1): void {
+/**
+ * A 2D drawing laid on a rectangle (origin = bottom-left corner): a splat per pixel, plus its
+ * detail. detail > 1 splats the whole drawing that many times finer (sharper lettering), with
+ * flat areas merged as for images.
+ */
+export function canvasPanel(o: Vec3, u: Vec3, v: Vec3, w: number, h: number, sp: number, draw: Draw2D, gain = 1, alpha = 1, detail = 1): void {
   const nu = Math.max(2, Math.round(w / sp)), nv = Math.max(2, Math.round(h / sp));
   const su = w / nu, sv = h / nv;
   // The side the drawing reads correctly from.
   const nx = u[1] * v[2] - u[2] * v[1], ny = u[2] * v[0] - u[0] * v[2], nz = u[0] * v[1] - u[1] * v[0];
   const old = setJitter(0.02);
   glow(gain);
-  splatDrawing(rasterize(nu, nv, draw), nu, nv, sv, draw, (X, Y, size, back, r, g, b, a) => {
+  const raster = rasterize(nu, nv, draw);
+  if (detail > 1) raster.detail.unshift({ x: 0, y: 0, w: nu, h: nv, px: nv * detail });
+  splatDrawing(raster, nu, nv, sv, draw, (X, Y, size, back, r, g, b, a) => {
     const fu = X / nu, fv = 1 - Y / nv;
     S(
       o[0] + u[0] * fu * w + v[0] * fv * h - nx * back,

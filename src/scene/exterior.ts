@@ -24,6 +24,11 @@ const ZR = [-240, -103, 102, 240];
 const ROAD_HALF = 8;
 const PLAZA = { x0: 108, x1: 145, z0: -90, z1: 90 };
 
+const inPlaza = (x: number, z: number): boolean => x > PLAZA.x0 && x < PLAZA.x1 && z > PLAZA.z0 && z < PLAZA.z1;
+
+/** The plaza and a 20 m apron round the building get finer paving than the rest of the ground. */
+const inApron = (x: number, z: number): boolean => sdFootprint(x, z) < 20 || inPlaza(x, z);
+
 function groundColor(x: number, z: number): RGB {
   let best = 1e9, alongX = false, centre = 0;
   for (const r of XR) {
@@ -43,10 +48,7 @@ function groundColor(x: number, z: number): RGB {
     return [0.1, 0.105, 0.115];
   }
   if (best < ROAD_HALF + 4.5) return [0.36, 0.36, 0.37];
-  if (x > PLAZA.x0 && x < PLAZA.x1 && z > PLAZA.z0 && z < PLAZA.z1) {
-    const px = ((x % 1.5) + 1.5) % 1.5, pz = ((z % 1.5) + 1.5) % 1.5;
-    return px < 0.1 || pz < 0.1 ? [0.34, 0.33, 0.32] : [0.47, 0.46, 0.44];
-  }
+  if (inPlaza(x, z)) return [0.47, 0.46, 0.44];
   if (sdFootprint(x, z) < 12 && x > -108 && x < 158 && Math.abs(z) < 103) return [0.4, 0.4, 0.41];
   return [0.16, 0.165, 0.17];
 }
@@ -59,12 +61,31 @@ function buildGround(k: number): void {
       for (let z = -extent; z < extent; z += sp) {
         if (Math.abs(x + sp / 2) < inner && Math.abs(z + sp / 2) < inner) continue;
         const px = x + rr(0, sp), pz = z + rr(0, sp);
-        if (sdFootprint(px, pz) < 0.5) continue; // the building's own floors are built with it
+        // The building's own floors are built with it, and the apron below.
+        if (sdFootprint(px, pz) < 0.5 || inApron(px, pz)) continue;
         const c = groundColor(px, pz), fade = extent > 420 ? 0.7 : 1;
         S(px, 0, pz, 1, 0, 0, 0, 0, 1, sp * 0.74, sp * 0.74, 0.05, c[0] * fade, c[1] * fade, c[2] * fade);
       }
     }
     inner = extent;
+  }
+  // The apron on a regular grid.
+  const as = 0.55 * k;
+  for (let x = -105 + as / 2; x < 150; x += as) {
+    for (let z = -92 + as / 2; z < 92; z += as) {
+      if (!inApron(x, z) || sdFootprint(x, z) < 0.5) continue;
+      const c = groundColor(x, z);
+      S(x, 0, z, 1, 0, 0, 0, 0, 1, as * 0.7, as * 0.7, 0.04, c[0], c[1], c[2]);
+    }
+  }
+  // Joints between the plaza's large pavers, every 3 m each way (not on the lightest setting).
+  if (k > 1.2) return;
+  const js = 0.35 * k, joint: RGB = [0.34, 0.33, 0.32];
+  for (let x = PLAZA.x0 + 1.5; x < PLAZA.x1; x += 3) {
+    for (let z = PLAZA.z0 + js / 2; z < PLAZA.z1; z += js) if (sdFootprint(x, z) > 0.5) S(x, 0.02, z, 0, 0, 1, 1, 0, 0, js * 0.7, 0.05, 0.02, ...joint);
+  }
+  for (let z = PLAZA.z0 + 1.5; z < PLAZA.z1; z += 3) {
+    for (let x = PLAZA.x0 + js / 2; x < PLAZA.x1; x += js) if (sdFootprint(x, z) > 0.5) S(x, 0.02, z, 1, 0, 0, 0, 0, -1, js * 0.7, 0.05, 0.02, ...joint);
   }
 }
 
@@ -242,7 +263,7 @@ function buildStreetLife(k: number): void {
     person(rr(-100, 150), rz + (rng() < 0.5 ? -1 : 1) * rr(ROAD_HALF + 1, ROAD_HALF + 4));
   }
   panel(142.1, 4.6, -10.4, 0, 0, 1, 0, 1, 0, 20.8, 11.8, 0.4, () => [0.02, 0.02, 0.025]); // backing, behind the picture
-  canvasPanel([142, 5, -10], [0, 0, 1], [0, 1, 0], 20, 11, 0.2 * Math.sqrt(k), drawScore, 1.5);
+  canvasPanel([142, 5, -10], [0, 0, 1], [0, 1, 0], 20, 11, 0.2 * Math.sqrt(k), drawScore, 1.5, 1, k > 1.2 ? 2 : 4);
   line(142.3, 0, -9, 142.3, 5, -9, 0.2, 0.3, 0.12, 0.12, 0.13);
   line(142.3, 0, 9, 142.3, 5, 9, 0.2, 0.3, 0.12, 0.12, 0.13);
 }

@@ -10,13 +10,27 @@ A real-time 3D Gaussian splat model of Rogers Place, home of the Edmonton Oilers
 
 The model is procedural: it's generated at load time from the arena's real layout, not photographed. You can open a trained `.ply` or `.splat` capture in the same viewer (see below).
 
-The Oilers logo on the video boards, ribbons, banners and centre ice is the team's official SVG from the NHL's logo server (`src/assets/`). It's rasterised once at load; if a browser can't draw it, the boards fall back to lettering.
+The Oilers logo on the video boards, ribbons, banners and centre ice is the team's official SVG from the NHL's logo server (`src/assets/`). It's rasterised once at load, at the SVG's own 960 × 640 size; if a browser can't draw it, the boards fall back to lettering.
+
+## Images and lettering
+
+Screens, ribbons and banners are 2D drawings turned into splats, normally one splat per pixel at the panel's spacing. That's too coarse for a logo, which would come out only 8 to 30 splats tall. So a drawing marks where it puts the logo, and that rectangle is redrawn at the artwork's own pixel count and splatted separately (`splatDrawing` in `src/splats/primitives.ts`). Flat colour merges into larger splats, so only the edges pay for fine ones: a logo costs about 80,000 splats at full resolution instead of roughly 250,000 at one per pixel.
+
+| Setting | Logos |
+| --- | --- |
+| Ultra | Their full original pixel count everywhere |
+| High | Full resolution, but small logos stop at 6 mm between splats |
+| Standard | Full resolution, but small logos stop at 12 mm |
+| Light | Logos stop at 40 mm between splats, to keep the load down on phones |
+
+A logo 20 m away can't show detail finer than about a centimetre even on a 4K screen, so the caps only remove splats nobody could see. The screens outside (the plaza screen, Ford Hall's video wall and the "OILERS" glass lettering) are also splatted 2–4 times finer than their panels, which makes their lettering sharp. Inside an ice-reflection range the coarse pixels stay 3 cm behind the face for the reflection to copy, and the fine splats stay out of it.
 
 ## Detail and reflections
 
 Apple describes the new Flyover views in Apple Maps on iOS 27 as capturing the shapes of individual trees and the way light reflects off glass towers. Apple hasn't published how it's rendered. The same two ideas are applied here:
 - **Reflective glass and metal.** Glass (building windows, the podium, car windows) and metal (the arena's skin) reflect the sky along the mirrored view direction, weighted by Schlick's Fresnel term, so glints slide across surfaces as the camera moves. Metal tints its reflection with its own colour. Surfaces in shadow don't catch the sun.
-- **Panel-by-panel skin.** The skin is laid out as individual diamond panels. Each panel is a small grid of splats sharing one slightly tilted normal and one shade of silver, so reflections break up panel by panel, as they do on the real building. Higher detail settings use more splats per panel.
+- **Panel-by-panel skin.** The skin is laid out as individual diamond panels. Each panel is a small grid of splats sharing one slightly tilted normal and one shade of silver, so reflections break up panel by panel, as they do on the real building. It's 5 × 5 splats per panel on Standard, 3 × 3 on Light and 9 × 9 on Ultra.
+- **The rest of the envelope.** The glass podium is a fine grid with slim mullions every 1.5 m, and a sill, transom and head. The soffit under the skin's lip is a lit white band. The roof membrane is a regular grid with seams every 6 m. The paving round the building and across the plaza is finer, with joints between the plaza's pavers. People have legs, arms and a head.
 - **Individual trees.** Each street tree has its own trunk, branches and about 140 leaf clusters in an irregular crown, in late-September colours. The spruces have whorls of drooping needle sprays.
 - **Cars** have clear-coated hoods, roofs and trunk lids that pick up reflections, raked glass, wheels, and head- and tail-lights.
 
@@ -24,7 +38,7 @@ Apple describes the new Flyover views in Apple Maps on iOS 27 as capturing the s
 
 | Stage | Where | What it does |
 | --- | --- | --- |
-| Scene generation | `src/scene/` | Builds about 0.9M to 2.9M splats: oriented discs, blobs, and 2D canvases (scoreboards, banners) rasterised into splats. |
+| Scene generation | `src/scene/` | Builds about 1.1M splats (Light) to 6.5M (Ultra): oriented discs, blobs, and 2D canvases (scoreboards, banners) rasterised into splats. |
 | Depth sort | `assembly/sort.ts`, `src/sort/` | A 20-bit counting sort compiled to WebAssembly (AssemblyScript), running in a Web Worker. It orders splats back to front in a few milliseconds. |
 | Splat rendering | `src/render/renderer.ts`, `shaders/splat.*` | Each 3D Gaussian is projected to an ellipse (see Projection below), shaded with its lighting and any sky reflection, and blended in sorted order into a half-float HDR buffer. |
 | Path-traced lighting | `src/render/lighting.ts`, `voxels.ts`, `shaders/trace.glsl`, `cache.frag`, `lighting.frag` | Voxel grids are built from the splats, storing coverage, surface colour and emission: 1 m around the arena, 4 m for the city. A radiance cache traces direct light and bounce rays for every surface voxel; each full pass adds a bounce. Each splat then gathers from it: shadowed sun and arena lights, sky light, and multi-bounce indirect light, such as ice lighting the lower bowl or screens tinting the crowd. It refines progressively, then stops. |
