@@ -52,6 +52,21 @@ export function walk(d: number, step: number, cb: WalkFn): void {
   }
 }
 
+/** The point at arc length a around the ring at offset d (wrapping, as walk() counts it), with its outward normal. */
+export function ringPoint(d: number, a: number): { x: number; z: number; nx: number; nz: number } {
+  const total = perimeter(d);
+  let rest = ((a % total) + total) % total;
+  for (let s = 0; s < 8; s++) {
+    const L = segLen(d, s);
+    if (rest <= L || s === 7) {
+      pointOn(d, s, Math.min(1, rest / L));
+      break;
+    }
+    rest -= L;
+  }
+  return { x: pt.x, z: pt.z, nx: pt.nx, nz: pt.nz };
+}
+
 export function perimeter(d: number): number {
   let L = 0;
   for (let s = 0; s < 8; s++) L += segLen(d, s);

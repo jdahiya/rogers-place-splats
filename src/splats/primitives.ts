@@ -133,40 +133,162 @@ export function panel(
   }
 }
 
-/** Draws into an offscreen canvas and returns its RGBA pixels. */
-export function rasterize(width: number, height: number, draw: Draw2D): Uint8ClampedArray {
+// ---- 2D drawings -------------------------------------------------------------
+
+/**
+ * A rectangle of a drawing, in the drawing's own pixels, that wants finer splats than the rest:
+ * px is the resolution it wants across its height (an image's own pixel count, say).
+ */
+export interface Detail { x: number; y: number; w: number; h: number; px: number }
+
+let marks: Detail[] | null = null;
+let imageSpacing = 0;
+
+/** Called by a drawing while it's rasterised: asks for this rectangle at px pixels tall. */
+export function markDetail(x: number, y: number, w: number, h: number, px: number): void {
+  marks?.push({ x, y, w, h, px });
+}
+
+/**
+ * Closest spacing (metres) detail rectangles are splatted at. 0 gives images their own pixel
+ * count everywhere; above 0, small images stop where finer splats couldn't be seen anyway.
+ */
+export function setImageSpacing(metres: number): void {
+  imageSpacing = metres;
+}
+
+export interface Raster {
+  px: Uint8ClampedArray;
+  /** Rectangles the drawing marked for finer splats. */
+  detail: Detail[];
+}
+
+function context(width: number, height: number): CanvasRenderingContext2D {
   const cv = document.createElement('canvas');
   cv.width = width;
   cv.height = height;
   const ctx = cv.getContext('2d', { willReadFrequently: true });
   if (!ctx) throw new Error('2D canvas is unavailable.');
-  draw(ctx, width, height);
-  return ctx.getImageData(0, 0, width, height).data;
+  return ctx;
 }
 
-/** One splat per pixel of a 2D drawing, laid on a rectangle (origin = bottom-left corner). */
-export function canvasPanel(o: Vec3, u: Vec3, v: Vec3, w: number, h: number, sp: number, draw: Draw2D, gain = 1, alpha = 1): void {
-  const nu = Math.max(2, Math.round(w / sp)), nv = Math.max(2, Math.round(h / sp));
-  const px = rasterize(nu, nv, draw);
-  const su = w / nu, sv = h / nv;
-  const old = setJitter(0.02);
-  glow(gain);
-  for (let j = 0; j < nv; j++) {
-    const fv = 1 - (j + 0.5) / nv;
-    for (let i = 0; i < nu; i++) {
-      const q = (j * nu + i) * 4;
+/** Draws into an offscreen canvas and returns its RGBA pixels and the rectangles it marked for detail. */
+export function rasterize(width: number, height: number, draw: Draw2D): Raster {
+  const ctx = context(width, height), detail: Detail[] = [];
+  marks = detail;
+  try {
+    draw(ctx, width, height);
+  } finally {
+    marks = null;
+  }
+  return { px: ctx.getImageData(0, 0, width, height).data, detail };
+}
+
+/** Pixel bounds of a detail rectangle (grown by a pixel) and how many times finer it's redrawn. */
+interface Tile { x0: number; y0: number; x1: number; y1: number; f: number }
+
+/** pxSize is the height of one of the drawing's pixels in metres. */
+function planTiles(detail: Detail[], W: number, H: number, pxSize: number): Tile[] {
+  const tiles: Tile[] = [];
+  for (const d of detail) {
+    const x0 = Math.max(0, Math.floor(d.x) - 1), y0 = Math.max(0, Math.floor(d.y) - 1);
+    const x1 = Math.min(W, Math.ceil(d.x + d.w) + 1), y1 = Math.min(H, Math.ceil(d.y + d.h) + 1);
+    if (x1 <= x0 || y1 <= y0) continue; // drawn off the edge of the canvas
+    const px = imageSpacing > 0 ? Math.min(d.px, (d.h * pxSize) / imageSpacing) : d.px;
+    tiles.push({ x0, y0, x1, y1, f: Math.max(1, Math.round(px / d.h)) });
+  }
+  return tiles;
+}
+
+type Emit = (x: number, y: number, size: number, r: number, g: number, b: number, a: number) => void;
+
+/**
+ * Redraws one tile of a drawing f times finer and turns it into splats. Flat areas merge into
+ * larger splats, so edges get fine splats without paying for them everywhere: a block merges
+ * when it and a margin of half its size around it are one colour, so the larger splat's soft
+ * edge only ever lies over that same colour. emit gets centres and sizes in the drawing's pixels.
+ */
+function tileSplats(W: number, H: number, draw: Draw2D, t: Tile, emit: Emit): void {
+  const tw = (t.x1 - t.x0) * t.f, th = (t.y1 - t.y0) * t.f, ctx = context(tw, th);
+  ctx.setTransform(t.f, 0, 0, t.f, -t.x0 * t.f, -t.y0 * t.f);
+  draw(ctx, W, H);
+  const px = ctx.getImageData(0, 0, tw, th).data, TOL = 4, MAX = 32;
+  const flat = (bx: number, by: number, b: number): boolean => {
+    const m = b >> 1, q0 = (by * tw + bx) * 4, r0 = px[q0]!, g0 = px[q0 + 1]!, b0 = px[q0 + 2]!, a0 = px[q0 + 3]!;
+    const xa = Math.max(0, bx - m), xb = Math.min(tw, bx + b + m), ya = Math.max(0, by - m), yb = Math.min(th, by + b + m);
+    for (let y = ya; y < yb; y++) {
+      for (let x = xa, q = (y * tw + xa) * 4; x < xb; x++, q += 4) {
+        if (Math.abs(px[q]! - r0) > TOL || Math.abs(px[q + 1]! - g0) > TOL || Math.abs(px[q + 2]! - b0) > TOL || Math.abs(px[q + 3]! - a0) > TOL) return false;
+      }
+    }
+    return true;
+  };
+  const visit = (bx: number, by: number, b: number): void => {
+    if (bx >= tw || by >= th) return;
+    if (b > 1 && (bx + b > tw || by + b > th || !flat(bx, by, b))) {
+      const hb = b >> 1;
+      visit(bx, by, hb);
+      visit(bx + hb, by, hb);
+      visit(bx, by + hb, hb);
+      visit(bx + hb, by + hb, hb);
+      return;
+    }
+    const q = (by * tw + bx) * 4;
+    if (px[q + 3]! < 10) return;
+    emit(t.x0 + (bx + b / 2) / t.f, t.y0 + (by + b / 2) / t.f, b / t.f, px[q]! / 255, px[q + 1]! / 255, px[q + 2]! / 255, px[q + 3]! / 255);
+  };
+  for (let by = 0; by < th; by += MAX) for (let bx = 0; bx < tw; bx += MAX) visit(bx, by, MAX);
+}
+
+/**
+ * Places one splat of a drawing: its centre (X, Y) and size in the drawing's own pixels, how far
+ * behind the drawing's face it sits (metres), and its colour.
+ */
+export type Placer = (X: number, Y: number, size: number, back: number, r: number, g: number, b: number, a: number) => void;
+
+/**
+ * Turns a rasterised drawing into splats: one per pixel, except over the rectangles it marked for
+ * detail, which are redrawn finer. Inside an ice-reflection range, those rectangles also keep
+ * their coarse pixels 3 cm behind the face, for the reflection to copy, and the fine splats stay
+ * out of the reflection. pxSize is the height of one of the drawing's pixels in metres.
+ */
+export function splatDrawing(raster: Raster, W: number, H: number, pxSize: number, draw: Draw2D, place: Placer): void {
+  const { px, detail } = raster, tiles = planTiles(detail, W, H, pxSize), proxies = reflecting > 0;
+  for (let j = 0; j < H; j++) {
+    for (let i = 0; i < W; i++) {
+      const q = (j * W + i) * 4;
       if (px[q + 3]! < 10) continue;
-      const fu = (i + 0.5) / nu;
-      S(
-        o[0] + u[0] * fu * w + v[0] * fv * h,
-        o[1] + u[1] * fu * w + v[1] * fv * h,
-        o[2] + u[2] * fu * w + v[2] * fv * h,
-        u[0], u[1], u[2], v[0], v[1], v[2],
-        su * 0.64, sv * 0.64, 0.02,
-        px[q]! / 255, px[q + 1]! / 255, px[q + 2]! / 255, (alpha * px[q + 3]!) / 255,
-      );
+      const tiled = tiles.some((t) => i >= t.x0 && i < t.x1 && j >= t.y0 && j < t.y1);
+      if (tiled && !proxies) continue;
+      place(i + 0.5, j + 0.5, 1, tiled ? 0.03 : 0, px[q]! / 255, px[q + 1]! / 255, px[q + 2]! / 255, px[q + 3]! / 255);
     }
   }
+  if (!tiles.length) return;
+  const old = setJitter(0), start = store.count;
+  for (const t of tiles) tileSplats(W, H, draw, t, (X, Y, size, r, g, b, a) => place(X, Y, size, 0, r, g, b, a));
+  setJitter(old);
+  if (proxies) noMirror.push([start, store.count]);
+}
+
+/** A 2D drawing laid on a rectangle (origin = bottom-left corner): a splat per pixel, plus its detail. */
+export function canvasPanel(o: Vec3, u: Vec3, v: Vec3, w: number, h: number, sp: number, draw: Draw2D, gain = 1, alpha = 1): void {
+  const nu = Math.max(2, Math.round(w / sp)), nv = Math.max(2, Math.round(h / sp));
+  const su = w / nu, sv = h / nv;
+  // The side the drawing reads correctly from.
+  const nx = u[1] * v[2] - u[2] * v[1], ny = u[2] * v[0] - u[0] * v[2], nz = u[0] * v[1] - u[1] * v[0];
+  const old = setJitter(0.02);
+  glow(gain);
+  splatDrawing(rasterize(nu, nv, draw), nu, nv, sv, draw, (X, Y, size, back, r, g, b, a) => {
+    const fu = X / nu, fv = 1 - Y / nv;
+    S(
+      o[0] + u[0] * fu * w + v[0] * fv * h - nx * back,
+      o[1] + u[1] * fu * w + v[1] * fv * h - ny * back,
+      o[2] + u[2] * fu * w + v[2] * fv * h - nz * back,
+      u[0], u[1], u[2], v[0], v[1], v[2],
+      su * 0.64 * size, sv * 0.64 * size, 0.02,
+      r, g, b, alpha * a,
+    );
+  });
   glow(1);
   setJitter(old);
 }
@@ -174,15 +296,22 @@ export function canvasPanel(o: Vec3, u: Vec3, v: Vec3, w: number, h: number, sp:
 // ---- Ice reflections -------------------------------------------------------
 
 const mirrorRanges: [number, number][] = [];
+/** Splats inside mirrored ranges that stay out of the reflection (fine detail with coarse stand-ins). */
+const noMirror: [number, number][] = [];
+let reflecting = 0;
 
 export function resetReflections(): void {
   mirrorRanges.length = 0;
+  noMirror.length = 0;
+  reflecting = 0;
 }
 
 /** Marks the start of splats that should also appear mirrored in the ice; call the result to close the range. */
 export function reflectFrom(): () => void {
   const start = store.count;
+  reflecting++;
   return () => {
+    reflecting--;
     mirrorRanges.push([start, store.count]);
   };
 }
@@ -190,7 +319,10 @@ export function reflectFrom(): () => void {
 /** Appends a blurred, faded mirror image (y → -y) of every marked splat above the ice. */
 export function buildReflections(fade: number, blur: number): void {
   for (const [start, end] of mirrorRanges) {
-    for (let i = start; i < end; i++) if (store.pos[i * 3 + 1]! > 0.05) mirror(i, fade, blur);
+    const skip = noMirror.filter(([a, b]) => a < end && b > start);
+    for (let i = start; i < end; i++) {
+      if (store.pos[i * 3 + 1]! > 0.05 && !skip.some(([a, b]) => i >= a && i < b)) mirror(i, fade, blur);
+    }
   }
 }
 

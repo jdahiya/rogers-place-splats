@@ -1,15 +1,19 @@
 // 2D drawings that become splats: video boards, ribbons, banners and the centre-ice emblem.
 // The game state matches the 19 Sept 2026 pre-season game against Winnipeg.
+import { markDetail } from '../splats/primitives';
 import { PI } from '../util/math';
 
 export const FONT = '"Saira Condensed", "Arial Narrow", sans-serif';
 
 const font = (weight: number, px: number): string => `${weight} ${Math.max(6, Math.round(px))}px ${FONT}`;
 
-/** The official Oilers logo in its versions for light and dark backgrounds, and the artwork's bounds. */
+/**
+ * The official Oilers logo for light and dark backgrounds, each at its own resolution and then
+ * halved repeatedly (level i is 2^i times smaller), and the artwork's bounds at full resolution.
+ */
 export interface LogoArt {
-  light: CanvasImageSource;
-  dark: CanvasImageSource;
+  light: CanvasImageSource[];
+  dark: CanvasImageSource[];
   sx: number;
   sy: number;
   sw: number;
@@ -23,11 +27,22 @@ export function setLogo(art: LogoArt | null): void {
   logo = art;
 }
 
-/** Draws the logo centred on (cx, cy) at the given height. Returns false if it isn't loaded. */
+/**
+ * Draws the logo centred on (cx, cy) at the given height, and asks for it to be turned into splats
+ * at the artwork's own pixel count. Returns false if it isn't loaded.
+ */
 function drawLogo(ctx: CanvasRenderingContext2D, cx: number, cy: number, height: number, onDark = false): boolean {
   if (!logo) return false;
-  const w = (height * logo.sw) / logo.sh;
-  ctx.drawImage(onDark ? logo.dark : logo.light, logo.sx, logo.sy, logo.sw, logo.sh, cx - w / 2, cy - height / 2, w, height);
+  const w = (height * logo.sw) / logo.sh, x = cx - w / 2, y = cy - height / 2;
+  markDetail(x, y, w, height, logo.sh);
+  // Draw from the smallest level still at least as big as it lands, so it shrinks cleanly.
+  const m = ctx.getTransform(), size = height * Math.hypot(m.b, m.d), levels = onDark ? logo.dark : logo.light;
+  let i = 0;
+  while (i + 1 < levels.length && logo.sh / 2 ** (i + 1) >= size) i++;
+  const s = 2 ** i;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(levels[i]!, logo.sx / s, logo.sy / s, logo.sw / s, logo.sh / s, x, y, w, height);
   return true;
 }
 

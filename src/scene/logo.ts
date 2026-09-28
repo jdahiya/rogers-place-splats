@@ -21,6 +21,22 @@ async function rasterise(svg: string): Promise<HTMLCanvasElement> {
   return cv;
 }
 
+/** The canvas halved repeatedly (with smoothing each time), so it can be drawn small without aliasing. */
+function halvings(base: HTMLCanvasElement): HTMLCanvasElement[] {
+  const levels = [base];
+  while (levels.length < 6) {
+    const prev = levels[levels.length - 1]!, cv = document.createElement('canvas');
+    cv.width = Math.max(1, prev.width >> 1);
+    cv.height = Math.max(1, prev.height >> 1);
+    const ctx = cv.getContext('2d');
+    if (!ctx) throw new Error('2D canvas is unavailable.');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(prev, 0, 0, cv.width, cv.height);
+    levels.push(cv);
+  }
+  return levels;
+}
+
 /** Bounds of the artwork's visible pixels. Throws if the canvas can't be read back. */
 function artBounds(cv: HTMLCanvasElement): { sx: number; sy: number; sw: number; sh: number } {
   const px = cv.getContext('2d')!.getImageData(0, 0, W, H).data;
@@ -45,7 +61,7 @@ export async function loadLogo(): Promise<void> {
     // Reading both back also proves neither canvas is tainted, which would break the splat builder.
     const bounds = artBounds(onLight);
     artBounds(onDark);
-    setLogo({ light: onLight, dark: onDark, ...bounds });
+    setLogo({ light: halvings(onLight), dark: halvings(onDark), ...bounds });
   } catch {
     setLogo(null);
   }

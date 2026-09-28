@@ -3,8 +3,8 @@
 import { HALF_PI, PI, type RGB, type Vec3 } from '../util/math';
 import { hash, pick, rng, rr, wpick } from '../util/random';
 import { glow, setJitter } from '../splats/store';
-import { S, SC, blob, canvasPanel, ell, lightBlob, line, panel, rasterize, reflectFrom, type Color } from '../splats/primitives';
-import { RA, RB, RR, SX, SZ, bowl, ceilY, perimeter, sdRR, walk } from './arena';
+import { S, SC, blob, canvasPanel, ell, lightBlob, line, panel, rasterize, reflectFrom, splatDrawing, type Color } from '../splats/primitives';
+import { RA, RB, RR, SX, SZ, bowl, ceilY, perimeter, ringPoint, sdRR, walk } from './arena';
 import { AWAY, BLUE, FAN_SHIRTS, HAIR, HOME, OFFICIAL, PANTS, RED, SKIN, type Team } from './palette';
 import { drawCrown, drawCup, drawEmblem, drawRetired, drawScore, drawScoreRing, drawStrip } from './screens';
 
@@ -378,17 +378,14 @@ function tier(o: TierSpec): number[] {
 /** An LED ribbon board running all the way round the bowl at offset d. */
 function ribbonBoard(d: number, y0: number, h: number, k: number): void {
   const done = reflectFrom();
-  const L = perimeter(d), step = 0.14 * Math.sqrt(k), rows = Math.max(6, Math.round(h / 0.1));
-  const W = Math.round(L / step);
-  const px = rasterize(W, rows, drawStrip);
+  // Square pixels, so lettering and the logo keep their proportions.
+  const rows = Math.max(6, Math.round(h / (0.1 * Math.sqrt(k)))), L = perimeter(d), W = Math.round(L / (h / rows));
+  const su = L / W, sv = h / rows;
   const old = setJitter(0.02);
   glow(1.45);
-  walk(d, step, (x, z, nx, nz, _s, _f, _L, a) => {
-    const col = Math.min(W - 1, Math.floor((a / L) * W)), tx = -nz, tz = nx;
-    for (let j = 0; j < rows; j++) {
-      const q = (j * W + col) * 4, y = y0 + (1 - (j + 0.5) / rows) * h;
-      S(x, y, z, tx, 0, tz, 0, 1, 0, step * 0.64, (h / rows) * 0.64, 0.02, px[q]! / 255, px[q + 1]! / 255, px[q + 2]! / 255);
-    }
+  splatDrawing(rasterize(W, rows, drawStrip), W, rows, sv, drawStrip, (X, Y, size, back, r, g, b, a) => {
+    const p = ringPoint(d, (X / W) * L), y = y0 + (1 - Y / rows) * h;
+    S(p.x + p.nx * back, y, p.z + p.nz * back, -p.nz, 0, p.nx, 0, 1, 0, su * 0.64 * size, sv * 0.64 * size, 0.02, r, g, b, a);
   });
   glow(1);
   setJitter(old);
