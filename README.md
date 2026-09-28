@@ -4,19 +4,29 @@ A real-time 3D Gaussian splat model of Rogers Place, home of the Edmonton Oilers
 
 **Live demo:** https://jdahiya.github.io/rogers-place-splats/
 
-- **Outside:** the metal skin and domed roof, the Ford Hall glass atrium and its video wall, the plaza watch party, and the downtown blocks around it, including Stantec Tower. A time-of-day slider moves the sun from morning to night.
-- **Inside:** a regulation NHL sheet with its markings, both seating bowls with about 25,000 fans, the suites, ribbon boards, the centre-hung scoreboard, retired numbers and Stanley Cup banners. **Goal!** runs a light show with moving spotlights.
+- **Outside:** the building's teardrop plan, modelled from photos: the seating drum and the tail that sweeps down toward the plaza, a skin of silver metal panels with its dark band, the white roof, and the glass podium with "OILERS" lettering. Under the tail is Ford Hall, with its oval ceiling cove, video wall and blue feature wall. Around it are the plaza watch party, street trees, traffic, and the downtown blocks, including Stantec Tower. A time-of-day slider moves the sun from morning to night.
+- **Inside:** a regulation NHL sheet with its markings and the Oilers logo at centre ice, both seating bowls with about 25,000 fans, the suites, ribbon boards, the centre-hung scoreboard, retired numbers and Stanley Cup banners. **Goal!** runs a light show with moving spotlights.
 - **Game state:** the scene is set during the 19 September 2026 pre-season game against Winnipeg. The **Broadcast** station sits at press level, where the TV wide shot comes from.
 
 The model is procedural: it's generated at load time from the arena's real layout, not photographed. You can open a trained `.ply` or `.splat` capture in the same viewer (see below).
+
+The Oilers logo on the video boards, ribbons, banners and centre ice is the team's official SVG from the NHL's logo server (`src/assets/`). It's rasterised once at load; if a browser can't draw it, the boards fall back to lettering.
+
+## Detail and reflections
+
+Apple describes the new Flyover views in Apple Maps on iOS 27 as capturing the shapes of individual trees and the way light reflects off glass towers. Apple hasn't published how it's rendered. The same two ideas are applied here:
+- **Reflective glass and metal.** Glass (building windows, the podium, car windows) and metal (the arena's skin) reflect the sky along the mirrored view direction, weighted by Schlick's Fresnel term, so glints slide across surfaces as the camera moves. Metal tints its reflection with its own colour. Surfaces in shadow don't catch the sun.
+- **Panel-by-panel skin.** The skin is laid out as individual diamond panels. Each panel is a small grid of splats sharing one slightly tilted normal and one shade of silver, so reflections break up panel by panel, as they do on the real building. Higher detail settings use more splats per panel.
+- **Individual trees.** Each street tree has its own trunk, branches and about 140 leaf clusters in an irregular crown, in late-September colours. The spruces have whorls of drooping needle sprays.
+- **Cars** have clear-coated hoods, roofs and trunk lids that pick up reflections, raked glass, wheels, and head- and tail-lights.
 
 ## How it works
 
 | Stage | Where | What it does |
 | --- | --- | --- |
-| Scene generation | `src/scene/` | Builds about 0.5M to 3.5M splats: oriented discs, blobs, and 2D canvases (scoreboards, banners) rasterised into splats. |
+| Scene generation | `src/scene/` | Builds about 0.9M to 2.9M splats: oriented discs, blobs, and 2D canvases (scoreboards, banners) rasterised into splats. |
 | Depth sort | `assembly/sort.ts`, `src/sort/` | A 20-bit counting sort compiled to WebAssembly (AssemblyScript), running in a Web Worker. It orders splats back to front in a few milliseconds. |
-| Splat rendering | `src/render/renderer.ts`, `shaders/splat.*` | EWA splatting: each 3D Gaussian is projected to a screen-space ellipse and blended in sorted order into a half-float HDR buffer. |
+| Splat rendering | `src/render/renderer.ts`, `shaders/splat.*` | Each 3D Gaussian is projected to an ellipse (see Projection below), shaded with its lighting and any sky reflection, and blended in sorted order into a half-float HDR buffer. |
 | Path-traced lighting | `src/render/lighting.ts`, `voxels.ts`, `shaders/trace.glsl`, `cache.frag`, `lighting.frag` | Voxel grids are built from the splats, storing coverage, surface colour and emission: 1 m around the arena, 4 m for the city. A radiance cache traces direct light and bounce rays for every surface voxel; each full pass adds a bounce. Each splat then gathers from it: shadowed sun and arena lights, sky light, and multi-bounce indirect light, such as ice lighting the lower bowl or screens tinting the crowd. It refines progressively, then stops. |
 | Post | `shaders/bloom-*.frag`, `composite.frag` | Bloom from emissive splats, a soft highlight roll-off, vignette and grain. |
 | Performance | `src/perf/` | Adaptive quality, frame pacing, GPU timing, a power and battery estimate, and live charts. |
@@ -27,7 +37,8 @@ WebGL has no access to hardware ray-tracing cores, so the path tracing runs as o
 
 Splat rendering follows the original paper and its reference rasteriser: Kerbl et al., *3D Gaussian Splatting for Real-Time Radiance Field Rendering*, SIGGRAPH 2023, [paper](https://arxiv.org/abs/2308.04079) and [code](https://github.com/graphdeco-inria/diff-gaussian-rasterization).
 
-- **Projection:** the 3D covariance is projected with the Jacobian of the perspective divide. The centre is clamped to 1.3× the field of view first, and 0.3 px² is added to the 2D covariance. Splats closer than 0.2 m are culled.
+- **Projection:** the 3D covariance is projected with the Jacobian of the perspective divide. The centre is clamped to 1.3× the field of view first, and 0.3 px² is added to the 2D covariance. Splats closer than 0.2 m are culled. Captures open with this projection, the only one `KHR_gaussian_splatting` defines.
+- **Tangential projection:** the generated arena uses the `tangential` projection mode from OpenUSD's 3D Gaussian splat schema, which is also RealityKit's default. Each Gaussian is projected orthographically onto the plane through its centre that faces the camera, and that plane is drawn as a real quad in 3D. Perspective-correct interpolation then evaluates the Gaussian exactly where each pixel's ray meets the plane, so a splat's footprint doesn't stretch toward the edges of a wide view or change as the camera turns. The 0.3 px² dilation is converted to the plane's scale. Switch between the two in the Performance panel.
 - **Opacity:** alpha is min(0.99, opacity · G). Fragments under 1/255 are skipped, and each splat extends to 3σ. Quads also shrink to where alpha can still reach 1/255, which saves fill on faint splats.
 - **Blending:** premultiplied back-to-front "over", which gives the same result as the reference's front-to-back blending with early termination.
 - **Colour:** spherical harmonics up to degree 3, evaluated per splat for the camera direction, using the reference basis constants. Colour is c = max(Σ SH·Y + 0.5, 0).
@@ -43,7 +54,7 @@ Supported capture formats:
 
 `npm test` round-trips each format.
 
-Apple's WWDC26 RealityKit `GaussianSplatComponent` uses the same parameterisation: position, scale, rotation, opacity and SH up to degree 3, drawn back to front. This viewer runs the same data on the web.
+Apple's WWDC26 RealityKit `GaussianSplatComponent` uses the same parameterisation: position, scale, rotation, opacity and SH up to degree 3, drawn back to front. Its defaults, depth sorting and tangential projection, are both available here. This viewer runs the same data on the web.
 
 **Known differences:**
 - The sort is global, not per-pixel, so splats can occasionally pop. [StopThePop](https://arxiv.org/abs/2402.00525)'s per-pixel sort isn't practical in WebGL2.
@@ -83,6 +94,7 @@ Browsers don't report power draw, so watts are modelled from GPU and CPU load fo
 
 Drop a `.ply`, `.splat`, `.spz`, `.glb` or `.gltf` capture on the page, or use **Open capture**. Captures from Polycam, Scaniverse, Luma, Postshot, Niantic tools or the reference 3DGS trainer all work.
 - **Link straight to a capture:** add `?capture=<url>` to the page address. The file's server has to allow cross-origin reads.
+- **Link to a view:** `?eye=x,y,z&look=x,y,z` opens at that camera position (metres, y up, centre ice at the origin), and `?time=HH:MM` sets the time of day. For example, `?eye=97,6,-24&look=86,24,-10` looks up at Ford Hall's ceiling cove.
 - **Upside down?** Use **Flip**.
 - **Lighting:** ray-traced lighting is off for captures, because their lighting is already baked into the photos.
 
@@ -98,12 +110,13 @@ npm run serve      # http://localhost:8080
 
 `npm run dev` rebuilds on change, `npm run typecheck` runs `tsc`, and `npm test` checks the WebAssembly sort against a reference ordering.
 
-`node tools/fetch-reference.mjs` downloads the openly licensed Rogers Place photos on Wikimedia Commons into `reference/`, with a `CREDITS.csv` of authors and licences. They're visual reference for modelling. The folder is git-ignored and isn't part of the site.
+`node tools/fetch-reference.mjs [--width=2048] [Category ...]` downloads openly licensed photos from Wikimedia Commons categories (the Rogers Place ones by default) into `reference/`, with a `CREDITS.csv` of authors and licences. It skips files it already has and backs off when rate-limited. The photos are visual reference for modelling. The folder is git-ignored and isn't part of the site.
 
 ```
 assembly/sort.ts        WebAssembly depth sort (AssemblyScript)
 src/main.ts             entry point: frame loop and UI wiring
-src/scene/              arena geometry, interior, exterior, palettes, 2D screen art
+src/scene/              arena geometry, interior, envelope and Ford Hall, exterior, trees, palettes, 2D screen art
+src/assets/             the official Oilers logo (SVG)
 src/splats/             splat storage, shape primitives, .ply/.splat import
 src/render/             WebGL2 renderer, voxel grids, ray-traced lighting, GLSL shaders
 src/sort/               sort worker and its main-thread client

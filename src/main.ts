@@ -12,6 +12,7 @@ import { Renderer } from './render/renderer';
 import { buildVoxelGrids } from './render/voxels';
 import { SHELL, roofY, sdRR } from './scene/arena';
 import { buildScene } from './scene/build';
+import { loadLogo } from './scene/logo';
 import { FONT } from './scene/screens';
 import { Sorter } from './sort/sorter';
 import { flipScene, parseGltf, parsePly, parseSplat, parseSpz } from './splats/importers';
@@ -57,6 +58,8 @@ let sun = sunAt(1145);
 let density = PROFILE.density;
 let custom = false;
 let rtEnabled = true;
+/** Tangential projection (RealityKit's default) for the arena; captures use the perspective one they were trained with. */
+let tangential = true;
 let autoSpin = !IS_PHONE;
 let running = false;
 let idleFrames = 0;
@@ -117,6 +120,11 @@ const panel = new PerfPanel(
     },
     sortMode: (mode) => {
       sorter.setMode(mode);
+      forceRender = true;
+      wake();
+    },
+    projection: (on) => {
+      tangential = on;
       forceRender = true;
       wake();
     },
@@ -261,7 +269,7 @@ function frame(now: number): void {
       sun: sun.dir, day: sun.day, dusk: sun.dusk, nightGlow: sun.nightGlow,
       fogColor: air.color, fogDensity: air.density,
       lightTex: rtEnabled && lighting.ready ? lighting.tex : null,
-      minPx: k.minPx, bloom: k.bloom, seed: frameSeed,
+      minPx: k.minPx, bloom: k.bloom, seed: frameSeed, tangential,
     },
     sceneW, sceneH, canvas.width, canvas.height,
   );
@@ -336,6 +344,7 @@ async function loadCapture(file: File): Promise<void> {
     if (!store.count) throw new Error('No splats found in that file.');
     custom = true;
     setCustomUi(true);
+    setProjection(false);
     renderer.upload(store);
     lighting.reset(store.count, 0);
     sorter.load(store.pos.slice(0, store.count * 3), store.count);
@@ -396,6 +405,11 @@ function setCustomUi(on: boolean): void {
   byId('back').hidden = !on;
   byId('aa-mode').hidden = !on;
   byId('subtitle').textContent = on ? 'Your capture' : 'Gaussian splats · outside and in';
+}
+
+function setProjection(on: boolean): void {
+  tangential = on;
+  byId<HTMLSelectElement>('pf-proj').value = on ? 'tangential' : 'perspective';
 }
 
 function syncDensity(): void {
@@ -478,6 +492,7 @@ byId('flip').addEventListener('click', () => {
 });
 
 byId('back').addEventListener('click', () => {
+  setProjection(true);
   void buildArena().then(() => {
     flight.goTo(camera, 'aerial', performance.now());
     setStation('aerial');
@@ -517,21 +532,44 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
+/** Parses "x,y,z" from a URL parameter. */
+function vec3Param(value: string | null): Vec3 | null {
+  const v = value?.split(',').map(Number);
+  return v && v.length === 3 && v.every(Number.isFinite) ? [v[0]!, v[1]!, v[2]!] : null;
+}
+
 async function start(): Promise<void> {
   if (IS_PHONE) byId('q-ultra').hidden = true;
   syncDensity();
-  camera.setEyeLook(...VIEWS.aerial);
-  setStation('aerial');
+  // ?eye=x,y,z&look=x,y,z opens at a particular viewpoint and ?time=HH:MM at a time of day,
+  // so a view can be shared as a link.
+  const params = new URLSearchParams(location.search);
+  const eye = vec3Param(params.get('eye')), look = vec3Param(params.get('look'));
+  if (eye && look) {
+    camera.setEyeLook(eye, look);
+    setStation(null);
+    autoSpin = false;
+  } else {
+    camera.setEyeLook(...VIEWS.aerial);
+    setStation('aerial');
+  }
+  const time = /^(\d{1,2}):(\d{2})$/.exec(params.get('time') ?? '');
+  if (time) {
+    tod.value = String(Number(time[1]) * 60 + Number(time[2]));
+    sun = sunAt(Number(tod.value));
+  }
   updateClock();
   void power.connectBattery();
   wake();
+  const logo = loadLogo();
   try {
     await Promise.race([document.fonts.load(`800 40px ${FONT}`), new Promise((resolve) => setTimeout(resolve, 2500))]);
   } catch {
     // Fall back to the system font for the scoreboard text.
   }
+  await logo;
   // ?capture=<url> opens a capture straight away (the server must allow cross-origin reads).
-  const link = new URLSearchParams(location.search).get('capture');
+  const link = params.get('capture');
   if (link) {
     try {
       const url = new URL(link, location.href);

@@ -1,4 +1,4 @@
-// GLSL sources are bundled as plain strings (esbuild "text" loader).
+// GLSL sources and SVG artwork are bundled as plain strings (esbuild "text" loader).
 declare module '*.vert' {
   const source: string;
   export default source;
@@ -10,6 +10,11 @@ declare module '*.frag' {
 }
 
 declare module '*.glsl' {
+  const source: string;
+  export default source;
+}
+
+declare module '*.svg' {
   const source: string;
   export default source;
 }

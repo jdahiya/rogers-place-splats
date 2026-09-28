@@ -5,7 +5,7 @@ import type { Camera } from './camera';
 /** [eye, look-at] pairs. */
 export const VIEWS = {
   aerial: [[235, 150, -215], [10, 8, 0]],
-  plaza: [[168, 5.5, -44], [90, 12, 0]],
+  plaza: [[166, 5.5, -50], [90, 12, 0]],
   ford: [[102, 4, -34], [84, 11, 0]],
   // Press-level main camera, where the TV broadcast's wide shot is taken from.
   broadcast: [[0, 21, -37], [0, 0, 4]],
@@ -18,14 +18,14 @@ export const VIEWS = {
 
 export type ViewName = keyof typeof VIEWS;
 
-interface Leg {
+export interface Leg {
   eye: Vec3;
   look: Vec3;
   seconds: number;
 }
 
 /** Street, through Ford Hall, into the bowl, down to the ice and up to the rafters. */
-const TOUR: Leg[] = [
+export const TOUR: readonly Leg[] = [
   { eye: [235, 150, -215], look: [10, 8, 0], seconds: 6 },
   { eye: [210, 60, -140], look: [90, 12, 0], seconds: 5 },
   { eye: [150, 6, -30], look: [90, 10, -5], seconds: 4.5 },

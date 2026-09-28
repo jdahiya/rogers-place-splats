@@ -4,6 +4,7 @@ import bloomUpFrag from './shaders/bloom-up.frag';
 import compositeFrag from './shaders/composite.frag';
 import fullscreenVert from './shaders/fullscreen.vert';
 import skyFrag from './shaders/sky.frag';
+import skyGlsl from './shaders/sky.glsl';
 import splatFrag from './shaders/splat.frag';
 import splatVert from './shaders/splat.vert';
 import { compile, createTarget, deleteTarget, must, uniforms, type Target } from './gl';
@@ -34,6 +35,8 @@ export interface FrameParams {
   minPx: number;
   bloom: boolean;
   seed: number;
+  /** Tangential projection (OpenUSD, RealityKit) instead of the 3DGS perspective (EWA) projection. */
+  tangential: boolean;
 }
 
 const BLOOM_LEVELS = 5;
@@ -71,14 +74,16 @@ export class Renderer {
     this.gl = gl;
     this.hdr = !!gl.getExtension('EXT_color_buffer_float');
 
-    this.splat = compile(gl, splatVert, splatFrag);
-    this.sky = compile(gl, fullscreenVert, skyFrag);
+    const withSky = (source: string): string => source.replace('#include "sky.glsl"', skyGlsl);
+    this.splat = compile(gl, withSky(splatVert), splatFrag);
+    this.sky = compile(gl, fullscreenVert, withSky(skyFrag));
     this.down = compile(gl, fullscreenVert, bloomDownFrag);
     this.up = compile(gl, fullscreenVert, bloomUpFrag);
     this.composite = compile(gl, fullscreenVert, compositeFrag);
     this.us = uniforms(gl, this.splat, [
       'u_tex', 'u_sh', 'u_light', 'u_proj', 'u_view', 'u_focal', 'u_vp', 'u_tanFov', 'u_camPos', 'u_shRot', 'u_shDegree',
-      'u_shTexels', 'u_aa', 'u_useLight', 'u_minPx', 'u_fogD', 'u_nightGlow', 'u_fogC',
+      'u_shTexels', 'u_aa', 'u_useLight', 'u_minPx', 'u_fogD', 'u_nightGlow', 'u_fogC', 'u_sun', 'u_day', 'u_dusk', 'u_reflect',
+      'u_projection',
     ] as const);
     this.uk = uniforms(gl, this.sky, ['u_r', 'u_u', 'u_f', 'u_sun', 'u_th', 'u_asp', 'u_day', 'u_dusk'] as const);
     this.ud = uniforms(gl, this.down, ['u_src', 'u_tx', 'u_th'] as const);
@@ -212,6 +217,11 @@ export class Renderer {
       gl.uniform1f(this.us.u_fogD, p.fogDensity);
       gl.uniform1f(this.us.u_nightGlow, p.nightGlow);
       gl.uniform3fv(this.us.u_fogC, p.fogColor);
+      gl.uniform3fv(this.us.u_sun, p.sun);
+      gl.uniform1f(this.us.u_day, p.day);
+      gl.uniform1f(this.us.u_dusk, p.dusk);
+      gl.uniform1f(this.us.u_reflect, p.look ? 1 : 0);
+      gl.uniform1i(this.us.u_projection, p.tangential ? 1 : 0);
       gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, this.drawCount);
       gl.bindVertexArray(null);
       gl.disable(gl.BLEND);

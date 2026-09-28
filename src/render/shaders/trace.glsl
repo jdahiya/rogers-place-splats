@@ -62,8 +62,22 @@ bool isInside(vec3 p) {
   return sdArena(p.xz, 49.5) < 0.0 && p.y < roofY(p.xz) - 0.5;
 }
 
+// The building outline: seating drum smooth-joined to the tapering tail (see scene/shell.ts).
+float sdTail(vec2 p) {
+  vec2 a = vec2(60.0, -10.0), ab = vec2(122.0, -44.0) - a;
+  float len = length(ab), t = clamp(dot(p - a, ab / len) / len, 0.0, 1.0);
+  return length(p - (a + ab * t)) - mix(44.0, 6.0, t);
+}
+
+float sdFootprint(vec2 p) {
+  float a = sdArena(p, 50.0), b = sdTail(p);
+  float h = clamp(0.5 + 0.5 * (b - a) / 18.0, 0.0, 1.0);
+  return mix(b, a, h) - 18.0 * h * (1.0 - h);
+}
+
+// Ford Hall: the atrium under the tail, outside the seating drum.
 bool inFordHall(vec3 p) {
-  return p.x > 66.0 && p.x < 108.0 && p.z > -42.0 && p.z < 30.0 && p.y < 27.5;
+  return sdFootprint(p.xz) < 0.0 && sdArena(p.xz, 50.0) > 0.5 && p.y < 27.0;
 }
 
 bool inFine(vec3 p) {

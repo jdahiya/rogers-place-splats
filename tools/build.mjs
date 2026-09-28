@@ -1,6 +1,6 @@
 // Builds the site into dist/:
 //   1. assembly/sort.ts  -> dist/sort.wasm        (AssemblyScript)
-//   2. src/**/*.ts       -> dist/main.js, dist/sort-worker.js (esbuild; shaders inlined as text)
+//   2. src/**/*.ts       -> dist/main.js, dist/sort-worker.js (esbuild; shaders and SVGs inlined as text)
 //   3. index.html, src/styles.css copied as-is
 // Usage: node tools/build.mjs [--watch]
 import { build, context } from 'esbuild';
@@ -46,7 +46,7 @@ const options = {
   outdir: 'dist',
   minify: !watch,
   sourcemap: true,
-  loader: { '.vert': 'text', '.frag': 'text', '.glsl': 'text' },
+  loader: { '.vert': 'text', '.frag': 'text', '.glsl': 'text', '.svg': 'text' },
   logLevel: 'info',
 };
 

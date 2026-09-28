@@ -6,6 +6,41 @@ export const FONT = '"Saira Condensed", "Arial Narrow", sans-serif';
 
 const font = (weight: number, px: number): string => `${weight} ${Math.max(6, Math.round(px))}px ${FONT}`;
 
+/** The official Oilers logo in its versions for light and dark backgrounds, and the artwork's bounds. */
+export interface LogoArt {
+  light: CanvasImageSource;
+  dark: CanvasImageSource;
+  sx: number;
+  sy: number;
+  sw: number;
+  sh: number;
+}
+
+/** Null until loaded (see logo.ts); the drawings then fall back to lettering. */
+let logo: LogoArt | null = null;
+
+export function setLogo(art: LogoArt | null): void {
+  logo = art;
+}
+
+/** Draws the logo centred on (cx, cy) at the given height. Returns false if it isn't loaded. */
+function drawLogo(ctx: CanvasRenderingContext2D, cx: number, cy: number, height: number, onDark = false): boolean {
+  if (!logo) return false;
+  const w = (height * logo.sw) / logo.sh;
+  ctx.drawImage(onDark ? logo.dark : logo.light, logo.sx, logo.sy, logo.sw, logo.sh, cx - w / 2, cy - height / 2, w, height);
+  return true;
+}
+
+/** "OILERS" in Oilers blue, as lettered on the arena's ground-floor glass. */
+export function drawWordmark(ctx: CanvasRenderingContext2D, W: number, H: number): void {
+  ctx.clearRect(0, 0, W, H);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = font(800, H * 0.95);
+  ctx.fillStyle = '#00205b';
+  ctx.fillText('OILERS', W / 2, H * 0.54);
+}
+
 export function drawScore(ctx: CanvasRenderingContext2D, W: number, H: number): void {
   const g = ctx.createLinearGradient(0, 0, 0, H);
   g.addColorStop(0, '#0b1f4d');
@@ -23,6 +58,7 @@ export function drawScore(ctx: CanvasRenderingContext2D, W: number, H: number): 
   ctx.font = font(800, H * 0.16);
   ctx.fillText('EDM', W * 0.25, H * 0.37);
   ctx.fillText('WPG', W * 0.75, H * 0.37);
+  drawLogo(ctx, W * 0.1, H * 0.68, H * 0.3, true);
   ctx.font = font(800, H * 0.46);
   ctx.fillStyle = '#ff7a33';
   ctx.fillText('2', W * 0.25, H * 0.69);
@@ -111,11 +147,13 @@ export function drawStrip(ctx: CanvasRenderingContext2D, W: number, H: number): 
   let x = 0, i = 0;
   while (x < W) {
     const [bg, fg, text] = blocks[i++ % blocks.length]!;
-    const w = ctx.measureText(text).width + H * 3;
+    const mark = text === 'OILERS' && !!logo ? H * 1.6 : 0;
+    const w = ctx.measureText(text).width + H * 3 + mark;
     ctx.fillStyle = bg;
     ctx.fillRect(x, 0, w, H);
+    if (mark) drawLogo(ctx, x + H * 1.5 + mark / 2 - H * 0.3, H / 2, H * 0.9);
     ctx.fillStyle = fg;
-    ctx.fillText(text, x + H * 1.5, H * 0.55);
+    ctx.fillText(text, x + H * 1.5 + mark, H * 0.55);
     x += w;
   }
 }
@@ -140,7 +178,8 @@ export function drawFord(ctx: CanvasRenderingContext2D, W: number, H: number): v
   ctx.textBaseline = 'middle';
   ctx.fillStyle = '#fff';
   ctx.font = font(800, H * 0.34);
-  ctx.fillText('GAME NIGHT', W / 2, H * 0.38);
+  const shift = drawLogo(ctx, W * 0.14, H * 0.42, H * 0.56, true) ? W * 0.06 : 0;
+  ctx.fillText('GAME NIGHT', W / 2 + shift, H * 0.38);
   ctx.font = font(700, H * 0.15);
   ctx.fillText('EDM  vs  WPG  ·  PRESEASON', W / 2, H * 0.73);
 }
@@ -179,16 +218,19 @@ export function drawCup(year: number) {
     ctx.textBaseline = 'middle';
     ctx.font = font(800, H * 0.17);
     ctx.fillText(String(year), W / 2, H * 0.66);
-    ctx.fillStyle = '#ff6a2a';
-    ctx.font = font(700, H * 0.075);
-    ctx.fillText('CHAMPIONS', W / 2, H * 0.82);
+    if (!drawLogo(ctx, W / 2, H * 0.84, H * 0.13, true)) {
+      ctx.fillStyle = '#ff6a2a';
+      ctx.font = font(700, H * 0.075);
+      ctx.fillText('CHAMPIONS', W / 2, H * 0.82);
+    }
   };
 }
 
-/** Centre-ice paint: a plain blue disc with orange and white rings. Deliberately not the team logo. */
+/** Centre-ice paint: the Oilers logo, or a plain ringed disc if the logo isn't available. */
 export function drawEmblem(ctx: CanvasRenderingContext2D, W: number, H: number): void {
   const cx = W / 2, cy = H / 2, R = Math.min(W, H) / 2;
   ctx.clearRect(0, 0, W, H);
+  if (drawLogo(ctx, cx, cy, H * 0.98)) return;
   ctx.fillStyle = 'rgba(20, 58, 150, 0.9)';
   ctx.beginPath();
   ctx.arc(cx, cy, R * 0.93, 0, 2 * PI);

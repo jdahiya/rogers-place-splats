@@ -19,6 +19,7 @@ export interface PanelInfo {
 export interface PanelHandlers {
   pacing(p: Pacing): void;
   sortMode(mode: SortMode): void;
+  projection(tangential: boolean): void;
   adaptive(on: boolean): void;
   lighting(on: boolean): void;
   bloom(on: boolean): void;
@@ -108,6 +109,8 @@ export class PerfPanel {
     pacing.addEventListener('change', () => handlers.pacing(pacing.value as Pacing));
     const sort = byId<HTMLSelectElement>('pf-sort');
     sort.addEventListener('change', () => handlers.sortMode(sort.value as SortMode));
+    const proj = byId<HTMLSelectElement>('pf-proj');
+    proj.addEventListener('change', () => handlers.projection(proj.value === 'tangential'));
     const bind = (id: string, on: boolean, fn: (v: boolean) => void): void => {
       const box = byId<HTMLInputElement>(id);
       box.checked = on;

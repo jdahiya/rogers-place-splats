@@ -23,7 +23,8 @@ function buildIce(k: number): void {
       S(px, 0, pz, 1, 0, 0, 0, 0, 1, sp * 0.72, sp * 0.72, 0.01, 0.88 * v, 0.93 * v, 0.97 * v, 0.72);
     }
   }
-  canvasPanel([-4.2, 0.006, 4.2], [1, 0, 0], [0, 0, -1], 8.4, 8.4, 0.07, drawEmblem, 1, 0.85);
+  // Centre-ice logo, reading the right way round from the broadcast side (-z).
+  canvasPanel([4.2, 0.006, -4.2], [-1, 0, 0], [0, 0, 1], 8.4, 8.4, 0.07, drawEmblem, 1, 0.85);
   const old = setJitter(0.03);
   stripeX(0, 0.305, RED);
   stripeX(7.77, 0.305, BLUE);
